@@ -1,3 +1,5 @@
+> **Notice (PostgreSQL fork).** This file is the verified record of the original CockroachDB Cloud build and is kept unchanged: its names, schemas, CHANGEFEED envelopes and row-level TTL facts describe that build, and this fork's scripts still deploy to it. The rest of this fork's documentation (`README.md`, `docs/ARCHITECTURE.md`, `docs/DEMO-SCRIPT.md`) describes the PostgreSQL variant: PostgreSQL in the database role, Redpanda Connect `postgres_cdc` over logical replication in place of CHANGEFEED, and a scheduled purge in place of TTL. The mapping between the two, and what a code port changes, lives in `docs/POSTGRES-PORT.md`.
+
 # Design and build contract: Agent memory on CockroachDB, governed by Redpanda
 
 This document is the single source of truth for names, schemas, environment

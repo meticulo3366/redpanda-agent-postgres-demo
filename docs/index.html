@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>An Agent That Remembers</title>
-<meta name="description" content="Five slides for the alliance team: agent memory on CockroachDB Cloud, streamed and governed by Redpanda.">
+<meta name="description" content="Five slides for the alliance team: agent memory on PostgreSQL, streamed and governed by Redpanda.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
@@ -24,8 +24,8 @@
   --red: #E2231A;
   --red-ink: #C41C14;
   --red-soft: #FCE8E7;
-  --purple: #6933FF;
-  --purple-soft: #EEE9FF;
+  --purple: #2F6792; /* database accent: PostgreSQL blue, token name kept */
+  --purple-soft: #E6EEF6;
   --teal: #1E7676;
   --teal-soft: #E2F0F0;
   --focus: #2F5BFF;
@@ -48,8 +48,8 @@
     --red: #FF5A51;
     --red-ink: #FF5A51;
     --red-soft: #3B1C1E;
-    --purple: #A287FF;
-    --purple-soft: #28214A;
+    --purple: #7FB3E0; /* database accent: PostgreSQL blue, token name kept */
+    --purple-soft: #1B2A3C;
     --teal: #62C4C4;
     --teal-soft: #16302F;
     --focus: #8FA8FF;
@@ -69,8 +69,8 @@
   --red: #FF5A51;
   --red-ink: #FF5A51;
   --red-soft: #3B1C1E;
-  --purple: #A287FF;
-  --purple-soft: #28214A;
+  --purple: #7FB3E0; /* database accent: PostgreSQL blue, token name kept */
+  --purple-soft: #1B2A3C;
   --teal: #62C4C4;
   --teal-soft: #16302F;
   --focus: #8FA8FF;
@@ -207,7 +207,7 @@ p { margin: 0; }
 
 /* Slide 3 */
 .diagram { overflow-x: auto; overscroll-behavior-x: contain; }
-.dg { display: block; width: 100%; min-width: 760px; height: auto; }
+.dg { display: block; width: 100%; min-width: 786px; height: auto; }
 .dg text { font-family: var(--font-body); fill: var(--ink); }
 .dg .t { font-size: 16px; font-weight: 600; }
 .dg .s { font-size: 13px; fill: var(--ink-2); }
@@ -268,6 +268,7 @@ tr:last-child td { border-bottom: 0; }
 .asks li::before { content: ""; position: absolute; left: 0; top: .55em; width: .4em; height: .4em; background: var(--teal); }
 .asks .contact { color: var(--ink); white-space: nowrap; }
 .asks .contact span { color: var(--ink-3); }
+.notice { font-family: var(--font-mono); font-size: .7em; color: var(--ink-3); text-wrap: pretty; }
 
 /* Bottom bar */
 .bar {
@@ -327,7 +328,7 @@ tr:last-child td { border-bottom: 0; }
 @media (max-width: 999px) {
   .lbl span { display: none; }
   .lbl { padding: .3rem .4rem; }
-  .dg { min-width: 1040px; }
+  .dg { min-width: 1075px; }
 }
 @media (max-width: 719px) {
   html { scroll-snap-type: y proximity; }
@@ -356,20 +357,20 @@ tr:last-child td { border-bottom: 0; }
 <section class="slide is-active" id="slide-1" aria-labelledby="h-1">
   <div class="title-body">
     <div class="head">
-      <p class="eyebrow">Redpanda demo on CockroachDB Cloud</p>
+      <p class="eyebrow">Redpanda demo on PostgreSQL</p>
       <h1 id="h-1">An agent that remembers, and can prove it</h1>
-      <p class="lead">Agent memory on CockroachDB Cloud, streamed and governed by Redpanda.</p>
+      <p class="lead">Agent memory on PostgreSQL, streamed and governed by Redpanda.</p>
     </div>
     <div class="stack">
       <span>Built on:</span>
       <span class="chip chip-rp">Redpanda Cloud</span>
       <span class="chip chip-adp">Redpanda Agentic Data Plane</span>
-      <span class="chip chip-db">CockroachDB Cloud</span>
-      <span>SaaS to SaaS, built and verified live, October 2026.</span>
+      <span class="chip chip-db">PostgreSQL</span>
+      <span>SaaS to SaaS; the CockroachDB original was built and verified live, October 2026.</span>
     </div>
   </div>
   <footer class="foot">
-    <a href="https://github.com/meticulo3366/redpanda-agent-database-demo">github.com/meticulo3366/redpanda-agent-database-demo</a>
+    <a href="https://github.com/meticulo3366/redpanda-agent-postgres-demo">github.com/meticulo3366/redpanda-agent-postgres-demo</a>
     <span class="n">1 / 5</span>
   </footer>
 </section>
@@ -383,11 +384,12 @@ tr:last-child td { border-bottom: 0; }
   <div class="cols">
     <div class="col col-db">
       <p class="label">Store</p>
-      <h3>CockroachDB Cloud</h3>
+      <h3>PostgreSQL</h3>
       <ul>
-        <li><strong>System of record and agent memory</strong> in one transactional database</li>
-        <li><strong>Row-level TTL:</strong> forgetting by policy</li>
-        <li><strong><code>CHANGEFEED</code></strong> straight to a topic, no connector host</li>
+        <li><strong>Where the operational data already lives:</strong> system of record and agent memory in one transactional database</li>
+        <li><strong>JSONB and full-text search</strong> built in, pgvector optional for semantic recall</li>
+        <li><strong>Logical replication</strong> is the change feed; Redpanda Connect <code>postgres_cdc</code> turns it into topic events</li>
+        <li><strong>Managed high availability:</strong> Multi-AZ failover, read replicas, point-in-time recovery</li>
       </ul>
     </div>
     <div class="col col-rp">
@@ -396,7 +398,7 @@ tr:last-child td { border-bottom: 0; }
       <ul>
         <li><strong>The memory change stream</strong> is the audit trail</li>
         <li><strong>Redpanda Connect</strong> materialises <code>memory_audit</code> from it</li>
-        <li><strong>A second pipeline</strong> turns account events into memories</li>
+        <li><strong>A third pipeline</strong> turns account events into memories</li>
       </ul>
     </div>
     <div class="col col-adp">
@@ -411,7 +413,7 @@ tr:last-child td { border-bottom: 0; }
     </div>
   </div>
   <footer class="foot">
-    <a href="https://github.com/meticulo3366/redpanda-agent-database-demo">github.com/meticulo3366/redpanda-agent-database-demo</a>
+    <a href="https://github.com/meticulo3366/redpanda-agent-postgres-demo">github.com/meticulo3366/redpanda-agent-postgres-demo</a>
     <span class="n">2 / 5</span>
   </footer>
 </section>
@@ -423,8 +425,8 @@ tr:last-child td { border-bottom: 0; }
     <h2 id="h-3">One loop: the agent writes memory, the change stream audits it and feeds it</h2>
   </div>
   <div class="diagram">
-    <svg class="dg" viewBox="0 0 1200 345" role="img" aria-labelledby="dg-title">
-      <title id="dg-title">Customer via A2A to the ADP managed agent, to the managed SQL MCP server, to CockroachDB Cloud. A CHANGEFEED streams row versions to Redpanda Cloud topics; two Redpanda Connect pipelines write memory_audit rows and observation memories back into CockroachDB.</title>
+    <svg class="dg" viewBox="0 0 1240 345" role="img" aria-labelledby="dg-title">
+      <title id="dg-title">Customer via A2A to the ADP managed agent, to the managed SQL MCP server, to PostgreSQL. A Redpanda Connect postgres_cdc pipeline reads logical replication changes into Redpanda Cloud topics; two more Redpanda Connect pipelines write memory_audit rows and observation memories back into PostgreSQL.</title>
       <defs>
         <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path class="ah" d="M0 0 L10 5 L0 10 Z"/></marker>
         <marker id="ah-db" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path class="ah-db" d="M0 0 L10 5 L0 10 Z"/></marker>
@@ -435,8 +437,8 @@ tr:last-child td { border-bottom: 0; }
       <text class="tag" x="138" y="28" text-anchor="middle">A2A</text>
       <text class="tag" x="364" y="28" text-anchor="middle">TOOL CALL</text>
       <text class="tag" x="550" y="28" text-anchor="middle">SQL AS AGENT ROLE</text>
-      <text class="tag" x="806" y="28" text-anchor="middle">ROW VERSIONS</text>
-      <text class="tag" x="982" y="28" text-anchor="middle">JSON EVENTS</text>
+      <text class="tag" x="806" y="28" text-anchor="middle">LOGICAL REPLICATION</text>
+      <text class="tag" x="1022" y="28" text-anchor="middle">JSON EVENTS</text>
 
       <!-- Customer -->
       <rect class="box" x="0.5" y="40.5" width="120" height="130" rx="8"/>
@@ -456,52 +458,54 @@ tr:last-child td { border-bottom: 0; }
       <text class="t" x="457" y="98" text-anchor="middle">SQL MCP server</text>
       <text class="m" x="457" y="124" text-anchor="middle">query · execute</text>
 
-      <!-- CockroachDB -->
+      <!-- PostgreSQL -->
       <rect class="box box-db" x="568.5" y="40.5" width="220" height="200" rx="8"/>
-      <text class="t t-db" x="678" y="68" text-anchor="middle">CockroachDB Cloud</text>
+      <text class="t t-db" x="678" y="68" text-anchor="middle">PostgreSQL</text>
       <text class="tag" x="584" y="92">SYSTEM OF RECORD</text>
       <text class="m" x="584" y="109">customers · accounts</text>
       <text class="m" x="584" y="126">transactions</text>
       <text class="tag" x="584" y="152">MEMORY</text>
-      <text class="m" x="584" y="169">memories · row TTL</text>
+      <text class="m" x="584" y="169">memories · scheduled purge</text>
       <text class="tag" x="584" y="196">HISTORY</text>
       <text class="m" x="584" y="213">memory_audit · append-only</text>
 
-      <!-- Changefeed -->
-      <rect class="box box-db" x="824.5" y="40.5" width="140" height="130" rx="8"/>
-      <text class="mb" x="894" y="101" text-anchor="middle">CHANGEFEED</text>
-      <text class="m" x="894" y="122" text-anchor="middle">on memories</text>
-      <text class="m" x="894" y="139" text-anchor="middle">on accounts</text>
+      <!-- CDC pipeline -->
+      <rect class="box box-rp" x="824.5" y="40.5" width="180" height="130" rx="8"/>
+      <text class="tag" x="914" y="64" text-anchor="middle">REDPANDA CONNECT</text>
+      <text class="mb" x="914" y="94" text-anchor="middle">postgres_cdc</text>
+      <text class="m" x="914" y="116" text-anchor="middle">managed pipeline</text>
+      <text class="m" x="914" y="134" text-anchor="middle">on memories</text>
+      <text class="m" x="914" y="152" text-anchor="middle">on accounts</text>
 
       <!-- Redpanda -->
-      <rect class="box box-rp" x="1000.5" y="40.5" width="199" height="240" rx="8"/>
-      <text class="t t-rp" x="1100" y="68" text-anchor="middle">Redpanda Cloud</text>
-      <rect class="sub" x="1008.5" y="80.5" width="183" height="70" rx="6"/>
-      <text class="tag" x="1016" y="98">TOPICS</text>
-      <text class="m" x="1016" y="117">agent.memory.cdc</text>
-      <text class="m" x="1016" y="134">agent.accounts.cdc</text>
-      <path class="arrow arrow-rp" d="M1100 151 V175"/>
-      <rect class="sub" x="1008.5" y="178.5" width="183" height="90" rx="6"/>
-      <text class="tag" x="1016" y="196">CONNECT PIPELINES</text>
-      <text class="m" x="1016" y="215">agent-memory-audit</text>
-      <text class="m" x="1016" y="232">agent-memory-observer</text>
-      <text class="s" x="1016" y="254">Bloblang rules, no model</text>
+      <rect class="box box-rp" x="1040.5" y="40.5" width="199" height="240" rx="8"/>
+      <text class="t t-rp" x="1140" y="68" text-anchor="middle">Redpanda Cloud</text>
+      <rect class="sub" x="1048.5" y="80.5" width="183" height="70" rx="6"/>
+      <text class="tag" x="1056" y="98">TOPICS</text>
+      <text class="m" x="1056" y="117">agent.memory.cdc</text>
+      <text class="m" x="1056" y="134">agent.accounts.cdc</text>
+      <path class="arrow arrow-rp" d="M1140 151 V175"/>
+      <rect class="sub" x="1048.5" y="178.5" width="183" height="90" rx="6"/>
+      <text class="tag" x="1056" y="196">CONNECT PIPELINES</text>
+      <text class="m" x="1056" y="215">agent-memory-audit</text>
+      <text class="m" x="1056" y="232">agent-memory-observer</text>
+      <text class="s" x="1056" y="254">Bloblang rules, no model</text>
 
       <!-- row arrows -->
       <path class="arrow" d="M121 105 H154"/>
       <path class="arrow" d="M347 105 H380"/>
       <path class="arrow" d="M533 105 H566"/>
       <path class="arrow arrow-db" d="M789 105 H822"/>
-      <path class="arrow arrow-rp" d="M965 105 H998"/>
+      <path class="arrow arrow-rp" d="M1005 105 H1038"/>
 
       <!-- return path -->
-      <path class="arrow arrow-rp" d="M1100 281 V322 H678 V243"/>
-      <text class="m" x="889" y="314" text-anchor="middle">INSERT memory_audit rows · INSERT observation memories</text>
-      <text class="tag" x="889" y="338" text-anchor="middle">ASYNCHRONOUS, WITHIN SECONDS</text>
+      <path class="arrow arrow-rp" d="M1140 281 V322 H678 V243"/>
+      <text class="m" x="909" y="314" text-anchor="middle">INSERT memory_audit rows · INSERT observation memories</text>
+      <text class="tag" x="909" y="338" text-anchor="middle">ASYNCHRONOUS, WITHIN SECONDS</text>
     </svg>
   </div>
   <footer class="foot">
-    <a href="https://github.com/meticulo3366/redpanda-agent-database-demo">github.com/meticulo3366/redpanda-agent-database-demo</a>
+    <a href="https://github.com/meticulo3366/redpanda-agent-postgres-demo">github.com/meticulo3366/redpanda-agent-postgres-demo</a>
     <span class="n">3 / 5</span>
   </footer>
 </section>
@@ -519,16 +523,16 @@ tr:last-child td { border-bottom: 0; }
       </thead>
       <tbody>
         <tr><td class="beat">1</td><td class="name">Cold start</td><td class="num">2</td><td class="sees">No memory yet; three accounts, identifiers <strong>masked by policy</strong>.</td></tr>
-        <tr><td class="beat">2</td><td class="name">Remember</td><td class="num">2.5</td><td class="sees">Two memories stored; <strong>CDC events and audit rows</strong> within seconds.</td></tr>
+        <tr><td class="beat">2</td><td class="name">Remember</td><td class="num">2.5</td><td class="sees">Two memories stored; <strong><code>postgres_cdc</code> events and audit rows</strong> within seconds.</td></tr>
         <tr><td class="beat">3</td><td class="name">Recall</td><td class="num">1.5</td><td class="sees">A new conversation <strong>recalls the goal and the preference</strong>.</td></tr>
         <tr><td class="beat">4</td><td class="name">Event-driven memory</td><td class="num">3</td><td class="sees">An overdraft becomes an observation memory; <strong>the agent mentions it unprompted</strong>.</td></tr>
         <tr><td class="beat">5</td><td class="name">Governance</td><td class="num">3</td><td class="sees">Destructive SQL and investment advice <strong>blocked by the guardrail before the model sees them</strong>; audit log says Denied.</td></tr>
-        <tr><td class="beat">6</td><td class="name">Forget</td><td class="num">1.5</td><td class="sees"><strong>An UPDATE, never a DELETE</strong>; TTL purges later and that delete is audited.</td></tr>
+        <tr><td class="beat">6</td><td class="name">Forget</td><td class="num">1.5</td><td class="sees"><strong>An UPDATE, never a DELETE</strong>; a scheduled purge deletes later and that delete is audited.</td></tr>
       </tbody>
     </table>
   </div>
   <footer class="foot">
-    <a href="https://github.com/meticulo3366/redpanda-agent-database-demo">github.com/meticulo3366/redpanda-agent-database-demo</a>
+    <a href="https://github.com/meticulo3366/redpanda-agent-postgres-demo">github.com/meticulo3366/redpanda-agent-postgres-demo</a>
     <span class="n">4 / 5</span>
   </footer>
 </section>
@@ -537,14 +541,14 @@ tr:last-child td { border-bottom: 0; }
 <section class="slide" id="slide-5" aria-labelledby="h-5">
   <div class="head">
     <p class="eyebrow">For the alliance team</p>
-    <h2 id="h-5">Take it to Cockroach Labs and to prospects</h2>
+    <h2 id="h-5">Take it to prospects running PostgreSQL</h2>
   </div>
   <div class="two">
     <div class="block block-rp">
       <p class="label">Use it</p>
       <ul>
-        <li><strong>Repo:</strong> <a href="https://github.com/meticulo3366/redpanda-agent-database-demo">github.com/meticulo3366/redpanda-agent-database-demo</a></li>
-        <li><strong><code>make up</code></strong> against your own CockroachDB Cloud cluster; the ADP side is pinned to the <code>adp-production</code> environment and its two demo LLM providers today. Prerequisites are in the README.</li>
+        <li><strong>Repo:</strong> <a href="https://github.com/meticulo3366/redpanda-agent-postgres-demo">github.com/meticulo3366/redpanda-agent-postgres-demo</a></li>
+        <li><strong><code>make up</code></strong> still deploys to CockroachDB Cloud; <code>docs/POSTGRES-PORT.md</code> lists what a port to your managed Postgres changes. The ADP side is pinned to the <code>adp-production</code> environment and its two demo LLM providers today. Prerequisites are in the README.</li>
         <li><strong>The talk track</strong> is <code>docs/DEMO-SCRIPT.md</code>.</li>
         <li><strong>Sharpen per prospect:</strong> fraud signals as observations, case memory, retention per memory kind.</li>
       </ul>
@@ -560,14 +564,15 @@ tr:last-child td { border-bottom: 0; }
   <div class="asks">
     <p class="label">Asks</p>
     <ul>
-      <li>A Cockroach Labs partner sandbox for joint demos</li>
-      <li>A joint webinar or blog</li>
+      <li>A managed Postgres sandbox with logical replication enabled</li>
+      <li>A webinar or blog post</li>
       <li>Feedback from the first three prospect showings</li>
     </ul>
     <p class="contact"><span>Contact</span> Zeke Dean, Redpanda</p>
   </div>
+  <p class="notice">Documentation fork: scripts still target CockroachDB; port plan in the repo.</p>
   <footer class="foot">
-    <a href="https://github.com/meticulo3366/redpanda-agent-database-demo">github.com/meticulo3366/redpanda-agent-database-demo</a>
+    <a href="https://github.com/meticulo3366/redpanda-agent-postgres-demo">github.com/meticulo3366/redpanda-agent-postgres-demo</a>
     <span class="n">5 / 5</span>
   </footer>
 </section>

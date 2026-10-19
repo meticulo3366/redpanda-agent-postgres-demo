@@ -6,6 +6,7 @@ Six acts, one agent, two terminals and the ADP console. Terminal A is for chat, 
 
 | Step | Command or action | Expect |
 |---|---|---|
+| Know which database the scripts hit | Read `docs/POSTGRES-PORT.md` | This fork's scripts still run against CockroachDB Cloud until that port is done; the talk track below describes the PostgreSQL variant (Redpanda Connect `postgres_cdc` in place of CHANGEFEED, an hourly purge in place of row-level TTL) |
 | ADP login is fresh (the token expires after about a day) | `rpk ai auth status` | `logged_in: true`, environment `adp-production`; otherwise `rpk ai auth login` |
 | Everything is up, and the guardrail fires through the agent | `VERIFY_GUARDRAIL=1 make verify` | Every line is PASS and the summary ends in `0 failed`, including the A2A smoke test, the audit row within 60s and the guardrail probe (the denied-topic prompt is blocked with `guardrail_intervened`). Run it before the reset below: verify stores "my favourite coffee shop is called verify-<nonce> Coffee" for the demo user and expires it afterwards |
 | Account state and memory are clean (cold start) | `make reset ALL=1` (the same as `scripts/demo-reset.sh --all`) | Account 1001 back at 2,450.00 USD, demo rent transaction gone, `memories_deleted N`, and the `live_memories` table is empty. This is an admin DELETE (the agent itself cannot delete); the deletes reach `memory_audit` as `op = delete` rows like any other change |
@@ -27,13 +28,13 @@ If anything in `make verify` fails, see Troubleshooting in `README.md`. Do not s
 | 3 Recall | 1.5 | Memory survives the conversation |
 | 4 Event-driven memory | 3 | The "why Redpanda" beat |
 | 5 Governance | 3 | Three stops, a denied topic and an optional PII beat; transcripts and audit log |
-| 6 Forget | 1.5 | Expire, never delete; TTL |
+| 6 Forget | 1.5 | Expire, never delete; scheduled purge |
 
 ## Intro (1.5 min)
 
 Show the architecture diagram in `README.md`.
 
-Say: "Agents need memory. The question is where it lives and who can see it change. In this demo memory is rows in CockroachDB Cloud, every change to those rows is an event in Redpanda, and the agent itself runs on Redpanda's Agentic Data Plane so identity, policy, guardrails and audit are part of the platform rather than part of the prompt. Six short acts."
+Say: "Agents need memory. The question is where it lives and who can see it change. In this demo memory is rows in PostgreSQL, every change to those rows is an event in Redpanda, and the agent itself runs on Redpanda's Agentic Data Plane so identity, policy, guardrails and audit are part of the platform rather than part of the prompt. Six short acts."
 
 ## Act 1: Cold start (2 min)
 
@@ -65,11 +66,11 @@ Audience sees: a one or two line confirmation that two things were remembered: a
 
 Say: "Two durable facts, two rows. The agent wrote them with an INSERT ... ON CONFLICT upsert on a content hash, so saying the same thing twice never duplicates memory."
 
-Terminal B: within a few seconds two CDC events appear on `agent.memory.cdc`. Each line is the Kafka key (the memory UUID as a JSON array) followed by the value: `"before": null`, an `"after"` object with `subject`, `kind`, `content`, `importance`, `expires_at`, and an `"updated"` HLC timestamp. On the next poll `memory_audit` shows two new rows with `op = insert` and the active memories list shows the two new rows.
+Terminal B: within a few seconds two CDC events appear on `agent.memory.cdc`. Each line is the Kafka key (`["<memory uuid>"]`, a JSON array) followed by the CDC envelope the pipeline builds from the row and the `postgres_cdc` metadata: `{"op":"insert","table":"memories","lsn":"<WAL position>","commit_ts_ms":<ms>,"before":null,"after":{subject, kind, content, importance, expires_at, ...}}`. `before` is filled only on update and delete. On the next poll `memory_audit` shows two new rows with `op = insert` and the active memories list shows the two new rows.
 
-If the identical sentence already exists for the subject, even expired from a rehearsal, the upsert revives it instead: terminal B shows an update event with a `before` image and `memory_audit` gets `op = update`. Say so, it is the dedup working. The pre-demo `make reset ALL=1` is what makes these genuine inserts.
+If the identical sentence already exists for the subject, even expired from a rehearsal, the upsert revives it instead: terminal B shows an update event carrying the old row as `before` (`memories` has `REPLICA IDENTITY FULL`, so every non-generated column is there, not only the key) and `memory_audit` gets `op = update`. Say so, it is the dedup working. The pre-demo `make reset ALL=1` is what makes these genuine inserts.
 
-Say: "This is a CockroachDB CHANGEFEED writing straight to a Redpanda topic, no connector host, no Debezium. A Redpanda Connect pipeline consumes it and materialises an append-only audit table. The agent has no DELETE privilege on anything and no UPDATE or DELETE on `memory_audit`, so history cannot be rewritten or erased; the pipeline is its intended writer. That table is the memory's history."
+Say: "This is a Redpanda Connect pipeline reading PostgreSQL logical replication with the `postgres_cdc` input: `wal_level=logical`, a publication and a replication slot on the database, no Debezium, no connector host. It writes every row change to a Redpanda topic, and the audit pipeline consumes that topic and materialises an append-only audit table. The agent has no DELETE privilege on anything and no UPDATE or DELETE on `memory_audit`, so history cannot be rewritten or erased; the pipeline is its intended writer. That table is the memory's history."
 
 ## Act 3: Recall in a new conversation (1.5 min)
 
@@ -81,7 +82,7 @@ make chat NEW=1 MSG="Anything I should keep in mind this month?"
 
 Audience sees: a short answer (the preference is being honoured) that mentions the house down payment goal and, typically, the House Fund balance and the Travel Card balance.
 
-Say: "New conversation, no transcript carried over. The only thing connecting these two chats is a row in CockroachDB keyed by my verified email. Memory survived the conversation because it was never in the conversation."
+Say: "New conversation, no transcript carried over. The only thing connecting these two chats is a row in PostgreSQL keyed by my verified email. Memory survived the conversation because it was never in the conversation."
 
 ## Act 4: Event-driven memory (3 min)
 
@@ -93,11 +94,11 @@ Terminal A:
 make overdraft
 ```
 
-Say: "That ran one transaction in CockroachDB: a rent debit of 2,900 and the checking balance moving from 2,450 to -450."
+Say: "That ran one transaction in PostgreSQL: a rent debit of 2,900 and the checking balance moving from 2,450 to -450."
 
-Terminal B: within a few seconds (allow up to 20) a new event appears on `agent.memory.cdc`. Its `after.kind` is `observation`, `after.source` is `event-stream`, `after.source_ref` looks like `accounts/1001@<hlc>`, and `after.content` reads like: "Account 'Everyday Checking' went overdrawn on 2026-10-15: balance moved from 2450.00 to -450.00 USD." A matching `memory_audit` row follows.
+Terminal B: within a few seconds (allow up to 20) a new event appears on `agent.memory.cdc`. The new row has `kind` `observation`, `source` `event-stream`, a `source_ref` like `accounts/1001@<lsn>` (the WAL position of the balance change), and a `content` that reads like: "Account 'Everyday Checking' went overdrawn on 2026-10-15: balance moved from 2450.00 to -450.00 USD." A matching `memory_audit` row follows.
 
-Say: "The `accounts` table has its own changefeed to `agent.accounts.cdc`. A second Connect pipeline, the observer, watched the balance cross zero and wrote an observation into memory with a reference back to the exact row version. No model involved, a few lines of Bloblang."
+Say: "The same `postgres_cdc` pipeline reads the `accounts` table from the publication and writes its changes to `agent.accounts.cdc`. With `REPLICA IDENTITY FULL` on `accounts` each update carries the old balance as well as the new one, so the observer pipeline saw the balance cross zero and wrote an observation into memory with a reference back to the exact WAL position. No model involved, a few lines of Bloblang."
 
 Terminal A (new context):
 
@@ -177,9 +178,9 @@ make chat MSG="Forget that I'm saving for a house."
 
 Audience sees: a one line confirmation that the goal was forgotten.
 
-Terminal B: an update event on `agent.memory.cdc` with both `before` and `after`; the only differences are `expires_at` (now in the past) and `updated_at`. `memory_audit` gains a row with `op = update`, and on the next poll the goal row disappears from the active memories list, because that query, like recall, filters on `expires_at > now()`.
+Terminal B: an update event on `agent.memory.cdc` with the old row as `before` next to the new one; the only differences are `expires_at` (now in the past) and `updated_at`. `memory_audit` gains a row with `op = update`, and on the next poll the goal row disappears from the active memories list, because that query, like recall, filters on `expires_at > now()`.
 
-Say: "Forgetting is an UPDATE, never a DELETE. The agent cannot delete; it sets `expires_at` to now. CockroachDB's row-level TTL job runs hourly and purges the row, and that purge is itself a changefeed delete event, so the audit table records the forget and the physical removal as two separate facts. The right to be forgotten and the duty to keep an audit trail are not in conflict here."
+Say: "Forgetting is an UPDATE, never a DELETE. The agent cannot delete; it sets `expires_at` to now. PostgreSQL has no row-level TTL, so a small scheduled Redpanda Connect pipeline, or pg_cron where your managed Postgres offers it, runs `DELETE FROM memories WHERE expires_at < now()` every hour. That purge flows through logical replication as its own delete event, so the audit table records the forget and the physical removal as two separate facts. The right to be forgotten and the duty to keep an audit trail are not in conflict here."
 
 Close: "Memory in a transactional database. The change stream as the audit trail and the integration point. An agent governed by a platform. Questions."
 
@@ -191,9 +192,9 @@ Run after every rehearsal or demo, before the next one.
 make reset ALL=1          # the same as scripts/demo-reset.sh --all
 ```
 
-This restores account 1001 to 2,450.00 USD, deletes the demo rent transaction and deletes every memory of the demo user, as admin: the observation from Act 4, the preference from Act 2 and the expired goal from Act 6 included. A plain `make reset` (no `ALL=1`) keeps the agent-written memories; use it only when the next run should start with memory already present. Asking the agent to "forget everything" is not a substitute: forgetting is an UPDATE that only sets `expires_at`, the row stays until the hourly TTL job runs, and Act 2's upsert would then revive it as an update instead of an insert.
+This restores account 1001 to 2,450.00 USD, deletes the demo rent transaction and deletes every memory of the demo user, as admin: the observation from Act 4, the preference from Act 2 and the expired goal from Act 6 included. A plain `make reset` (no `ALL=1`) keeps the agent-written memories; use it only when the next run should start with memory already present. Asking the agent to "forget everything" is not a substitute: forgetting is an UPDATE that only sets `expires_at`, the row stays until the hourly purge runs, and Act 2's upsert would then revive it as an update instead of an insert.
 
-The admin deletes are themselves captured by the changefeed, so `memory_audit` keeps `op = delete` rows for them; history is never reset.
+The admin deletes are themselves captured by logical replication (`op` `delete`, the old row as `before`, `after` null), so `memory_audit` keeps `op = delete` rows for them; history is never reset.
 
 Then stop `make observe` in terminal B with Ctrl-C and start it again for the next run. The next `make chat NEW=1 MSG="..."` starts a fresh A2A context (`.state/chat-context` is overwritten).
 
@@ -205,4 +206,4 @@ Then stop `make observe` in terminal B with Ctrl-C and start it again for the ne
 | Act 4 observation does not appear within 30s | Keep talking about the pipeline; check terminal B for the `agent.memory.cdc` event. If the balance was already negative (reset skipped), `make reset` then `make overdraft` |
 | Agent recalls stale memories from a previous run | Say so, it is a feature (memory survived); or, in a third terminal, `make reset ALL=1` and restart Act 1 with `make chat NEW=1 MSG="..."` |
 | Guardrail does not block in Act 5 (the agent declines politely instead of printing `[blocked by guardrail]`) | Most likely the agent is on the Bedrock provider, where the guardrail does not fire through the agent (converse path): in a third terminal `set -a; source .env; set +a; rpk ai agent update memory-concierge --llm-provider "$LLM_PROVIDER" --model "$LLM_MODEL"` and retry, or run the direct invoke curl from the Act 5 sidebar, which shows Bedrock intervening. Otherwise a guardrail change may still be propagating (about 30s). Either way the agent declines on its own (system prompt), so there is no MCP error to quote; show the `blocked_patterns` list on the MCP server page in the console and the `role agent_rw is denied DELETE on memories` PASS line from `make verify`, and say that the guardrail is the outermost of three stops, not the only one |
-| `make observe` shows nothing at all | The audit pipeline or changefeed is down; fall back to the Transcripts tab for Act 2 and continue |
+| `make observe` shows nothing at all | The audit pipeline or the `postgres_cdc` pipeline is down (an inactive replication slot is the usual sign); fall back to the Transcripts tab for Act 2 and continue |
