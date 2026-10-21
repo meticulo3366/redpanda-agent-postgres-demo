@@ -7,7 +7,7 @@
 # deletes memories: the trigger logs each delete, so the purge shows up in
 # agent_memory.memory_audit like any other change.
 #
-# Contract: docs/PORT-CONTRACT.md section 6. Written for Redpanda Connect 4.69+.
+# Contract: docs/DESIGN.md section 6. Written for Redpanda Connect 4.69+.
 #   lint : rpk connect lint --skip-env-var-check connect/memory-purge.yaml
 # (secrets as in memory-audit.yaml; the linter interpolates "dollar-brace" even
 # inside comments, so comments here never spell that syntax out.)

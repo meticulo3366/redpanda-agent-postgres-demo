@@ -1,4 +1,4 @@
-# Makefile - entry points for the agent-memory demo on PostgreSQL (docs/PORT-CONTRACT.md section 8).
+# Makefile - entry points for the agent-memory demo on PostgreSQL (docs/DESIGN.md section 8).
 # Every target runs a script in scripts/; the scripts are idempotent.
 #
 #   make up                      run 00 to 60 in order

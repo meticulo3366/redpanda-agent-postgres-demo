@@ -1,8 +1,7 @@
-# Port contract: the Memory Concierge on PostgreSQL (GantrySQL), 2026-10-21
+# Design contract: the Memory Concierge on PostgreSQL (GantrySQL), 2026-10-21
 
-Binding for every file in this repository. It replaced the pre-port plan (now `origin/POSTGRES-PORT-plan.md`), which
-assumed logical replication and database roles, because this contract was written against the live target server and
-that plan was not. Connection details of the target server live only in the gitignored `.postgres.env` and `.env`;
+Binding for every file in this repository. It was written against the live target server: every engine fact below was
+probed, not assumed. Connection details of the target server live only in the gitignored `.postgres.env` and `.env`;
 they never appear in a tracked file, this one included.
 
 ## 1. The target server, as probed live
@@ -56,7 +55,7 @@ they never appear in a tracked file, this one included.
 | ADP MCP server | `pg-agent-memory` (managed SQL, driver `postgres`, DSN `${secrets.AGENT_MEMORY_PG_DSN}`) |
 | ADP agent | `memory-concierge-pg` (display `Memory Concierge (PostgreSQL)`, tags `demo: agent-memory-pg`, `owner: zeke.dean`, `stack: postgresql-redpanda`) |
 | Cedar policies | `memory-concierge-pg-mcp` (`resource == McpServer::"pg-agent-memory"`), `memory-concierge-pg-llm` (`when { resource in [LLMProvider::"zeke-anthropic-agent-memory", LLMProvider::"zeke-bedrock-agent-memory"] }`) |
-| Providers, guardrail | shared with the CockroachDB demo, unchanged: `zeke-anthropic-agent-memory` (agent), `zeke-bedrock-agent-memory` (guardrail backend, alternative), `agent-memory-guardrail` |
+| Providers, guardrail | shared with other demos on the environment: `zeke-anthropic-agent-memory` (agent), `zeke-bedrock-agent-memory` (guardrail backend, alternative), `agent-memory-guardrail` |
 | Demo user | `zeke.dean@redpanda.com` |
 
 The CockroachDB demo's resources (user `agent-memory-demo`, topics `agent.memory.cdc` and `agent.accounts.cdc`,
@@ -246,7 +245,7 @@ rendered by `scripts/50-deploy-agent.sh` into the gitignored `adp/agent.yaml`. C
 
 `scripts/lib.sh`: `pg_admin_psql "<sql>" [args]`, `pg_admin_psql_file <file> [args]` (psql with `PG_ADMIN_URL`,
 `-v ON_ERROR_STOP=1 -X -q`), `pg_agent_url`; `load_env` checks the section 3 names; `rp_token`, `rp_api`, `aigw_rpc`,
-`rpk_kafka` as in the CockroachDB demo.
+`rpk_kafka`.
 
 `scripts/00-preflight.sh`: tools, ADP login and environment, `.env` from `.postgres.env` when missing (never
 overwrites), `.state/`, PostgreSQL connectivity with the server version, `wal_level` and `rolcreaterole` of the
@@ -277,7 +276,7 @@ optional `VERIFY_GUARDRAIL=1` denied-topic probe.
 memories deleted; `--all` deletes every memory of the demo user). `scripts/90-teardown.sh`: default removes the agent,
 the two policies, the MCP server and the four pipelines; `--all` also the topics, ACLs, SASL user, the three secrets
 and `DROP SCHEMA agent_memory CASCADE`; `--providers` also the shared providers and the guardrail; `FORCE=1`,
-`DRY_RUN=1`. `scripts/30-changefeeds.sh` and `scripts/10-cockroach-setup.sh` are gone, as is `cockroach/`.
+`DRY_RUN=1`.
 
 `Makefile` targets: `preflight`, `setup-db`, `setup-redpanda`, `pipelines`, `pipelines-local`, `deploy-agent`,
 `verify`, `up` (preflight, setup-db, setup-redpanda, pipelines, deploy-agent, verify), `chat`, `observe`,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 20-redpanda-setup.sh - Redpanda Cloud side: this demo's SASL user, ACLs, topics
-# and the three secrets, all through the Data Plane API (docs/PORT-CONTRACT.md
+# and the three secrets, all through the Data Plane API (docs/DESIGN.md
 # section 2). Everything is named apart from the CockroachDB demo that shares the
 # cluster (user agent-memory-pg-demo, topics agent.pg.*, secrets AGENT_MEMORY_PG_*).
 #

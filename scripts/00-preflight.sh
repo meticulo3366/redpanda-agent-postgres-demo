@@ -5,13 +5,13 @@
 # .env is written from .postgres.env (gitignored; PGHOST, PGPORT, PGDATABASE,
 # PGUSER, PGPASSWORD, optionally PG_AGENT_USER and PG_AGENT_PASSWORD when the
 # server lets you create a least-privilege role) plus the fixed names in
-# docs/PORT-CONTRACT.md section 2 and a generated Kafka password.
+# docs/DESIGN.md section 2 and a generated Kafka password.
 # Idempotent: an existing .env is never overwritten.
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 
-# Fixed values from docs/PORT-CONTRACT.md sections 2-3.
+# Fixed values from docs/DESIGN.md sections 2-3.
 FIXED_PG_SCHEMA="agent_memory"
 FIXED_REDPANDA_BROKERS="seed-8a6dfc25.d6kjl4h19241bg3ek3h0.byoc.prd.cloud.redpanda.com:9092"
 FIXED_REDPANDA_DATAPLANE_API="https://api-8a6dfc25.d6kjl4h19241bg3ek3h0.byoc.prd.cloud.redpanda.com"
@@ -163,7 +163,7 @@ wal="$(pg_admin_psql "SHOW wal_level" -At 2>/dev/null || echo unknown)"
 if [[ "$wal" == "logical" ]]; then
   log "    wal_level = logical (the trigger-fed change_log still works; a postgres_cdc input would be possible too)"
 else
-  log "    wal_level = $wal: no logical decoding, so change capture is the trigger-fed change_log table (docs/PORT-CONTRACT.md section 1)"
+  log "    wal_level = $wal: no logical decoding, so change capture is the trigger-fed change_log table (docs/DESIGN.md section 1)"
 fi
 can_role="$(pg_admin_psql "SELECT rolcreaterole FROM pg_roles WHERE rolname = current_user" -At 2>/dev/null || echo "?")"
 if [[ "$can_role" == "t" ]]; then

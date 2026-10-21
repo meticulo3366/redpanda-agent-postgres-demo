@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 90-teardown.sh [--all] [--providers] - remove what the demo created (docs/PORT-CONTRACT.md section 8).
+# 90-teardown.sh [--all] [--providers] - remove what the demo created (docs/DESIGN.md section 8).
 #   default     : ADP agent, Cedar policies, MCP server; the four Connect pipelines
 #   --all       : also this demo's topics, ACLs, SASL user and secrets, and DROP SCHEMA
 #                 agent_memory CASCADE in PostgreSQL (the database itself is kept)

@@ -4,7 +4,7 @@
 # agent_memory.memory_audit table, so every memory write (insert, update, purge
 # delete) made by the Memory Concierge is kept as an immutable record.
 #
-# Contract: docs/PORT-CONTRACT.md section 6. Written for Redpanda Connect 4.69+.
+# Contract: docs/DESIGN.md section 6. Written for Redpanda Connect 4.69+.
 #   lint : rpk connect lint --skip-env-var-check connect/memory-audit.yaml
 #   test : rpk connect test connect/tests/memory-audit_test.yaml
 #

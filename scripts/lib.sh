@@ -3,7 +3,7 @@
 #
 # Source it, never execute it:   source "$(dirname "$0")/lib.sh"
 #
-# Public surface (docs/PORT-CONTRACT.md section 8; other scripts call these by name):
+# Public surface (docs/DESIGN.md section 8; other scripts call these by name):
 #   REPO_ROOT ENV_FILE STATE_DIR
 #   log info ok warn die
 #   load_env require_cmd
@@ -42,7 +42,7 @@ load_env() {
   # shellcheck disable=SC1090
   source "$ENV_FILE"
   set +a
-  # Every required variable documented in .env.example (docs/PORT-CONTRACT.md
+  # Every required variable documented in .env.example (docs/DESIGN.md
   # section 3); the scripts dereference all of them under set -u.
   local v
   for v in PG_ADMIN_URL PG_HOST PG_DATABASE PG_SCHEMA PG_AGENT_USER PG_AGENT_PASSWORD \

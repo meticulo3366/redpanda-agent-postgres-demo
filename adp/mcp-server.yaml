@@ -1,4 +1,4 @@
-# Managed SQL MCP server for the Memory Concierge on PostgreSQL (docs/PORT-CONTRACT.md section 7).
+# Managed SQL MCP server for the Memory Concierge on PostgreSQL (docs/DESIGN.md section 7).
 # Create: rpk ai mcp-server create pg-agent-memory -f adp/mcp-server.yaml --enabled
 # Update: rpk ai mcp-server update pg-agent-memory -f adp/mcp-server.yaml
 # The DSN is the AGENT_MEMORY_PG_DSN secret (scope SCOPE_MCP_SERVER), created by scripts/20-redpanda-setup.sh.

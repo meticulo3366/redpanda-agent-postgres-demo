@@ -1,6 +1,6 @@
 -- postgres/01-schema.sql
 -- Agent memory on PostgreSQL: schema for the Memory Concierge demo.
--- Contract: docs/PORT-CONTRACT.md section 4. All DDL is idempotent and lives in
+-- Contract: docs/DESIGN.md section 4. All DDL is idempotent and lives in
 -- schema agent_memory of the target database. Run as the admin user
 -- (scripts/10-postgres-setup.sh, make setup-db).
 --

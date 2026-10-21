@@ -10,7 +10,7 @@
 #
 # Env knobs: OBSERVE_INTERVAL (5), OBSERVE_LIMIT (10),
 #            OBSERVE_SUBJECT (DEMO_USER_EMAIL; empty = all subjects)
-# Contract: docs/PORT-CONTRACT.md section 8 (observe.sh).
+# Contract: docs/DESIGN.md section 8 (observe.sh).
 set -euo pipefail
 
 # shellcheck source=lib.sh

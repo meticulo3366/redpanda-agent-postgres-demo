@@ -1,6 +1,6 @@
 -- postgres/02-triggers.sql
 -- Change capture for the Memory Concierge: AFTER ROW triggers append to
--- agent_memory.change_log (01-schema.sql). Contract: docs/PORT-CONTRACT.md
+-- agent_memory.change_log (01-schema.sql). Contract: docs/DESIGN.md
 -- section 4. Idempotent: CREATE OR REPLACE FUNCTION, DROP TRIGGER IF EXISTS.
 --
 -- GantrySQL rules learned live, which is why the bodies look the way they do:

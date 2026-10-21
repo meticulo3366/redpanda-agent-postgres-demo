@@ -13,7 +13,7 @@
 #   {"change_id", "table", "op", "row_key", "subject", "before", "after", "changed_at"}
 # with before/after as the trigger's documents (null for insert/delete).
 #
-# Contract: docs/PORT-CONTRACT.md section 5. Written for Redpanda Connect 4.69+.
+# Contract: docs/DESIGN.md section 5. Written for Redpanda Connect 4.69+.
 #   lint : rpk connect lint --skip-env-var-check connect/pg-cdc.yaml
 #   test : rpk connect test connect/tests/pg-cdc_test.yaml
 #

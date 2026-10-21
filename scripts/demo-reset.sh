@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/demo-reset.sh
-# Puts the demo back to its seeded state, as the admin (docs/PORT-CONTRACT.md section 4):
+# Puts the demo back to its seeded state, as the admin (docs/DESIGN.md section 4):
 #   - account 1001 balance back to 2,450.00 (updated_at = now())
 #   - removes the demo rent transaction posted by scripts/demo-overdraft.sh
 #   - re-applies postgres/03-seed.sql: restores any missing seed rows and

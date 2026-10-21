@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/50-deploy-agent.sh - deploy the Memory Concierge to Redpanda ADP
-# (docs/PORT-CONTRACT.md section 7), in this order:
+# (docs/DESIGN.md section 7), in this order:
 #
 #   1. LLM providers (rpk ai llm-provider, create if missing): BEDROCK_PROVIDER,
 #                     the guardrail's backend and own-account billing alternative,

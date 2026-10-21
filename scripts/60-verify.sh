@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 60-verify.sh - end-to-end verification (docs/PORT-CONTRACT.md section 8).
+# 60-verify.sh - end-to-end verification (docs/DESIGN.md section 8).
 # Prints one PASS/FAIL line per check and exits non-zero when anything failed.
 #   SKIP_A2A=1 (or --skip-a2a)  skip the checks that talk to the agent (LLM calls, 1-3 min)
 #   SKIP_STREAM=1               skip the change-stream probe (it needs pg-agent-memory-cdc and -audit running)

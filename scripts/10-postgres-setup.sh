@@ -6,7 +6,7 @@
 #   postgres/03-seed.sql      customers, accounts, transactions             (ON CONFLICT DO NOTHING,
 #                             then re-anchors the seeded ledger to the last 30 days)
 # then prints row counts and proves the agent user can log in.
-# Contract: docs/PORT-CONTRACT.md sections 4 and 8. Idempotent: safe to re-run.
+# Contract: docs/DESIGN.md sections 4 and 8. Idempotent: safe to re-run.
 #
 # Usage: scripts/10-postgres-setup.sh        (make setup-db)
 # Needs .env from scripts/00-preflight.sh (PG_ADMIN_URL, PG_AGENT_* ...).

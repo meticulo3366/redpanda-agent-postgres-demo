@@ -6,7 +6,7 @@
 # pg-agent-memory-observer pipeline turns the before.balance >= 0 ->
 # after.balance < 0 transition into an observation memory.
 #
-# In ONE transaction (docs/PORT-CONTRACT.md section 4), as the admin:
+# In ONE transaction (docs/DESIGN.md section 4), as the admin:
 #   - insert a -2,900.00 rent debit ("Riverside Property Mgmt") on account 1001
 #   - set balance = -450.00, updated_at = now() on account 1001
 # Idempotent: the debit has a fixed txn_id (ON CONFLICT DO NOTHING) and the UPDATE

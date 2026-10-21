@@ -17,7 +17,7 @@
 # resolves). For --local the script renders .state/connect/*.rendered.yaml
 # copies with secrets.NAME -> NAME and moves metrics/logger (service-wide
 # fields, not allowed inside stream files) into a streams-mode root config.
-# Idempotent by pipeline display_name. Contract: docs/PORT-CONTRACT.md sections 5, 6, 8.
+# Idempotent by pipeline display_name. Contract: docs/DESIGN.md sections 5, 6, 8.
 set -euo pipefail
 
 # shellcheck source=lib.sh

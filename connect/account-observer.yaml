@@ -7,7 +7,7 @@
 #   - large deposit  : after.balance - before.balance >= 5000
 # Everything else (other updates, malformed events) is dropped.
 #
-# Contract: docs/PORT-CONTRACT.md section 6. Written for Redpanda Connect 4.69+.
+# Contract: docs/DESIGN.md section 6. Written for Redpanda Connect 4.69+.
 #   lint : rpk connect lint --skip-env-var-check connect/account-observer.yaml
 #   test : rpk connect test connect/tests/account-observer_test.yaml
 #
