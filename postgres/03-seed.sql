@@ -1,5 +1,5 @@
 -- postgres/03-seed.sql
--- Demo data for the Memory Concierge. Contract: docs/DESIGN.md section 4. Ported from the CockroachDB demo: identical data.
+-- Demo data for the Memory Concierge. Contract: docs/DESIGN.md section 4.
 -- Idempotent: every INSERT is ON CONFLICT DO NOTHING and every key is
 -- deterministic, so re-running never duplicates rows and never resets state
 -- that the demo changed (scripts/demo-reset.sh does that).

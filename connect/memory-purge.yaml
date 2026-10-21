@@ -1,6 +1,6 @@
 # pg-agent-memory-purge
 #
-# The retention job. CockroachDB forgot by row-level TTL; PostgreSQL has no
+# The retention job. PostgreSQL has no
 # built-in TTL and this server has no pg_cron, so once an hour this pipeline
 # deletes every memory whose expires_at has passed. "Forget" in the agent is an
 # UPDATE of expires_at, never a DELETE, and this purge is the only thing that

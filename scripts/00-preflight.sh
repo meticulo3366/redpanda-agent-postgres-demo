@@ -16,7 +16,7 @@ FIXED_PG_SCHEMA="agent_memory"
 FIXED_REDPANDA_BROKERS="seed-8a6dfc25.d6kjl4h19241bg3ek3h0.byoc.prd.cloud.redpanda.com:9092"
 FIXED_REDPANDA_DATAPLANE_API="https://api-8a6dfc25.d6kjl4h19241bg3ek3h0.byoc.prd.cloud.redpanda.com"
 FIXED_REDPANDA_SCHEMA_REGISTRY_URL="https://schema-registry-0d1ddabe.d6kjl4h19241bg3ek3h0.byoc.prd.cloud.redpanda.com:30081"
-# This demo's own SASL user (the CockroachDB demo on the same cluster has its own).
+# This demo's own SASL user (other demos on the same cluster have their own).
 FIXED_KAFKA_USER="agent-memory-pg-demo"
 FIXED_TOPIC_MEMORY_CDC="agent.pg.memory.cdc"
 FIXED_TOPIC_ACCOUNTS_CDC="agent.pg.accounts.cdc"

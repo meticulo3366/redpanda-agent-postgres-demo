@@ -96,7 +96,7 @@ teardown:
 	bash $(SCRIPTS)/90-teardown.sh
 
 # make teardown-all PROVIDERS=1 also removes the LLM providers and the guardrail
-# (shared with the CockroachDB demo on the same ADP environment).
+# (shared with other demos on the same ADP environment).
 teardown-all:
 	bash $(SCRIPTS)/90-teardown.sh --all $(if $(PROVIDERS),--providers,)
 

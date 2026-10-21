@@ -4,7 +4,7 @@
 #   --all       : also this demo's topics, ACLs, SASL user and secrets, and DROP SCHEMA
 #                 agent_memory CASCADE in PostgreSQL (the database itself is kept)
 #   --providers : also the LLM providers and the guardrail. They are SHARED with the
-#                 CockroachDB demo on the same ADP environment, so this is off by
+#                 other demos on the same ADP environment, so this is off by
 #                 default even with --all.
 # Asks for confirmation unless FORCE=1. DRY_RUN=1 only looks things up and prints the plan.
 # .env is kept so a later `make up` reuses the same Kafka password.
@@ -65,7 +65,7 @@ log "  ADP:        agent $AGENT_NAME, policies ${POLICIES[*]}, MCP server $MCP_S
 if (( PROVIDERS )); then
   log "  ADP shared: provider $LLM_PROVIDER (agent), guardrail $GUARDRAIL_NAME, provider $BEDROCK_PROVIDER (guardrail backend)"
 else
-  log "  ADP shared: providers and guardrail are KEPT (shared with the CockroachDB demo; pass --providers to remove them)"
+  log "  ADP shared: providers and guardrail are KEPT (shared with other demos; pass --providers to remove them)"
 fi
 log "  Pipelines:  ${PIPELINES[*]}"
 if (( ALL )); then

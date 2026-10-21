@@ -179,7 +179,7 @@ What stops what, and where:
 | Agent talks only to this MCP server and the two demo LLM providers | n/a | Cedar `memory-concierge-pg-mcp`, `memory-concierge-pg-llm` (`when { resource in [...] }` over both providers) | n/a |
 | Everything is recorded | n/a | Transcripts (a guardrail block is a failed turn); audit log (`Denied` with the guardrail named when the gateway evaluated it) | `memory_audit` via the trigger and the pipelines |
 
-The first two rows are the honest gap: subject isolation is a prompt instruction backed by nothing below the model. The third and fourth rows are the port's own gap: on this server the blocklist is the whole database boundary. See Limitations.
+The first two rows are the honest gap: subject isolation is a prompt instruction backed by nothing below the model. The third and fourth rows are this server's gap: on this server the blocklist is the whole database boundary. See Limitations.
 
 ## Limitations
 

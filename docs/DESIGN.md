@@ -58,9 +58,8 @@ they never appear in a tracked file, this one included.
 | Providers, guardrail | shared with other demos on the environment: `zeke-anthropic-agent-memory` (agent), `zeke-bedrock-agent-memory` (guardrail backend, alternative), `agent-memory-guardrail` |
 | Demo user | `zeke.dean@redpanda.com` |
 
-The CockroachDB demo's resources (user `agent-memory-demo`, topics `agent.memory.cdc` and `agent.accounts.cdc`,
-pipelines `agent-memory-*`, MCP server `crdb-agent-memory`, agent `memory-concierge`, secrets `AGENT_MEMORY_CRDB_DSN`,
-`AGENT_MEMORY_KAFKA_USER`, `AGENT_MEMORY_KAFKA_PASSWORD`) stay untouched on the same cluster and environment. Only the
+Other demos on the same cluster and environment keep their own users, topics, pipelines, MCP servers, agents and
+secrets. Only the
 providers and the guardrail are shared, which is why `scripts/90-teardown.sh` keeps them unless `--providers`.
 
 ## 3. Environment (`.env`; `.env.example` documents it)
@@ -118,7 +117,7 @@ All idempotent. `01-schema.sql` starts with `CREATE SCHEMA IF NOT EXISTS agent_m
   on UPDATE of accounts writes `table_name 'accounts'`, `row_key = account_id`, `subject = owner_email`, documents
   with keys `account_id, owner_email, nickname, account_type, balance, currency, overdraft_limit, status,
   updated_at` (never `account_number` or `customer_id`). No casts anywhere in trigger bodies.
-- Seed (`03-seed.sql`): the CockroachDB seed, `SET search_path TO agent_memory, public;` first, identical data
+- Seed (`03-seed.sql`): `SET search_path TO agent_memory, public;` first, then the demo data
   (customer `zeke.dean@redpanda.com`, accounts 1001 to 1003, 25 transactions on 1001 summing to 2450.00, alice and
   bob), every INSERT `ON CONFLICT DO NOTHING`, then the re-anchor UPDATE that shifts the seeded ledger so its newest
   row is about one day old; it selects the seeded rows with `txn_id BETWEEN 'c0ffee00-0000-4000-8000-000000000000'
@@ -186,8 +185,8 @@ key = `row_key` as text.
   CONFLICT (change_id) DO NOTHING`; batching `count: 100, period: 1s`, `max_in_flight: 2`.
 - `connect/account-observer.yaml` (`pg-agent-memory-observer`): topic `agent.pg.accounts.cdc`, group
   `agent-memory-pg-observer`; `op == "update"` with both documents only; rules overdraft (`before.balance >= 0 &&
-  after.balance < 0`) and large deposit (`after.balance - before.balance >= 5000`); content sentences as in the
-  CockroachDB demo with the date from `after.updated_at`; `subject` from the envelope, else `after.owner_email`;
+  after.balance < 0`) and large deposit (`after.balance - before.balance >= 5000`); content sentences are one
+  third-person line with the nickname, the two balances and the date from `after.updated_at`; `subject` from the envelope, else `after.owner_email`;
   `source_ref = "accounts/<account_id>@<change_id>"`; `content_hash = (subject.lowercase() + "|" +
   content.lowercase()).hash("md5").encode("hex")` (verified equal to the server's `md5()`); output `INSERT INTO
   agent_memory.memories (subject, kind, content, importance, source, source_ref, content_hash, expires_at) VALUES

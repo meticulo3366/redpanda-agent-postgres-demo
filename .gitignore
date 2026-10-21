@@ -1,6 +1,5 @@
 # Credentials and local state - never commit
 .env
-.cockroachlabs.env
 .state/
 *.local.yaml
 *.local.json
