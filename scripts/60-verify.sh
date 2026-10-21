@@ -181,8 +181,9 @@ else
     cid="$(sql_scalar "SELECT max(change_id) FROM $S.change_log WHERE table_name = 'memories' AND row_key = $mid AND op = 'insert'" || true)"
     if [[ "$cid" =~ ^[0-9]+$ ]]; then
       pass "trigger logged the insert as change $cid"
+      # 60s: a publish that fails once is retried after the 30s lease expires.
       t0=$SECONDS; published=""
-      while (( SECONDS - t0 < 30 )); do
+      while (( SECONDS - t0 < 60 )); do
         published="$(sql_scalar "SELECT published_at IS NOT NULL FROM $S.change_log WHERE change_id = $cid" || true)"
         [[ "$published" == "t" ]] && break
         sleep 2
@@ -190,7 +191,7 @@ else
       if [[ "$published" == "t" ]]; then
         pass "cdc pipeline published change $cid to Redpanda after $((SECONDS - t0))s"
       else
-        fail "change $cid was not published within 30s (pipeline pg-agent-memory-cdc$( (( cdc_running )) || printf ' is not running'))"
+        fail "change $cid was not published within 60s (pipeline pg-agent-memory-cdc$( (( cdc_running )) || printf ' is not running'))"
       fi
       t0=$SECONDS; audited="0"
       while (( SECONDS - t0 < 30 )); do

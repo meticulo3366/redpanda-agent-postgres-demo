@@ -283,7 +283,9 @@ and `DROP SCHEMA agent_memory CASCADE`; `--providers` also the shared providers 
 `verify`, `up` (preflight, setup-db, setup-redpanda, pipelines, deploy-agent, verify), `chat`, `observe`,
 `overdraft`, `purge`, `reset` (`ALL=1`), `teardown`, `teardown-all` (`PROVIDERS=1`), `lint`, `test`.
 
-## 9. Observed locally on 2026-10-21
+## 9. Observed on 2026-10-21
+
+### Locally first
 
 Before the cloud deploy, with the cdc, audit and observer pipelines running on a laptop (`make pipelines-local`)
 against the target server and the Redpanda Cloud cluster:
@@ -298,6 +300,29 @@ against the target server and the Redpanda Cloud cluster:
   The consumers absorbed the duplicates (`ON CONFLICT` on `change_id` and on `(subject, content_hash)`); the claim
   with `claimed_at` removed them.
 - `rpk connect lint --skip-env-var-check connect/*.yaml` and the three test files pass; `bash -n scripts/*.sh` passes.
-- The cloud side (secrets, topics through the Data Plane API, managed pipelines, MCP server, agent, `make verify` end
-  to end) was not yet run at the time of writing because the ADP login was pending; the scripts for it are the
-  CockroachDB demo's with the section 2 names.
+### Then on Redpanda Cloud (17:03 to 17:20 UTC)
+
+- `make setup-redpanda` created the SASL user, the three ACLs and the three secrets; the two topics already existed
+  (created through the Kafka API during the local run). `make pipelines` created the four managed pipelines; each
+  reached `STATE_RUNNING` about 30 seconds after creation. `make deploy-agent` found the shared providers and the
+  guardrail in place, created the MCP server (tools `execute`, `query` discovered on the first refresh), the two Cedar
+  policies and the agent, which was `AGENT_STATE_RUNNING` after about 75 seconds.
+- First `VERIFY_GUARDRAIL=1 make verify`: 31 of 32 checks passed. The one failure was the change-stream probe's publish
+  window: three minutes after the pipelines started, a probe inserted at 17:06:04 was claimed at once, but its publish
+  and mark stalled, the 30-second lease expired, the row was claimed again at 17:06:35, published (a second copy on the
+  topic) and marked at 17:06:47; the audit row appeared at 17:06:49. Every later change, including one made after four
+  and a half idle minutes, was claimed within a second and published and audited one second later, with one copy on the
+  topic. The verify window for the publish is now 60 seconds (a lease retry fits inside) and every SQL component in
+  the pipelines carries `conn_max_idle_time: 30s` and `conn_max_life_time: 10m` so an idle connection is not reused
+  after a middlebox may have dropped it. Second run: 32 of 32 passed, publish and audit both 1 second after the insert.
+- The six acts, from `make reset ALL=1`: Act 1 masked `tax_id` and the account numbers; Act 2 stored two memories whose
+  audit rows landed 3 seconds after the write; Act 3 recalled both in a new conversation; Act 4's overdraft produced the
+  observation memory and its audit row 3 seconds after the UPDATE, and the agent opened the next new conversation with
+  it unprompted; Act 5's three prompts were blocked by the gateway-evaluated guardrail (`[blocked by guardrail]`, about
+  one second each); Act 6's forget became an `update` audit row and `make purge` a `delete` audit row seconds later.
+- A blocked prompt poisons the rest of its conversation: after any `[blocked by guardrail]` turn, every later turn in
+  the same conversation, however harmless, is blocked within a second, because the blocked prompt stays in the history
+  the guardrail evaluates. A new conversation (`make chat NEW=1 ...`) is clean, and the memory lives in the database, so
+  the demo script starts Act 6 in a new conversation. Asked, in a clean conversation, to hard-delete every memory
+  "with a single statement, no soft-expiry", the agent declined by instruction and offered to expire memories instead;
+  the MCP blocklist stays the backstop behind that.

@@ -65,6 +65,8 @@ output:
   sql_raw:
     driver: postgres
     dsn: "${secrets.AGENT_MEMORY_PG_DSN}"
+    conn_max_idle_time: 30s
+    conn_max_life_time: 10m
     query: >-
       INSERT INTO agent_memory.memory_audit (change_id, memory_id, subject, op, before_doc, after_doc, changed_at)
       VALUES ($1::bigint,$2::bigint,$3,$4,$5::jsonb,$6::jsonb,$7::timestamptz)

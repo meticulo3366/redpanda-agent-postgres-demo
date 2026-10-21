@@ -39,6 +39,8 @@ pipeline:
     - sql_raw:
         driver: postgres
         dsn: "${secrets.AGENT_MEMORY_PG_DSN}"
+        conn_max_idle_time: 30s
+        conn_max_life_time: 10m
         query: >-
           UPDATE agent_memory.change_log
              SET claimed_at = now()
@@ -115,6 +117,8 @@ output:
               - sql_raw:
                   driver: postgres
                   dsn: "${secrets.AGENT_MEMORY_PG_DSN}"
+                  conn_max_idle_time: 30s
+                  conn_max_life_time: 10m
                   query: UPDATE agent_memory.change_log SET published_at = now() WHERE change_id = $1::bigint AND published_at IS NULL
                   args_mapping: root = [ this.change_id ]
                   max_in_flight: 1
@@ -136,6 +140,8 @@ output:
               - sql_raw:
                   driver: postgres
                   dsn: "${secrets.AGENT_MEMORY_PG_DSN}"
+                  conn_max_idle_time: 30s
+                  conn_max_life_time: 10m
                   query: UPDATE agent_memory.change_log SET published_at = now() WHERE change_id = $1::bigint AND published_at IS NULL
                   args_mapping: root = [ this.change_id ]
                   max_in_flight: 1
@@ -144,6 +150,8 @@ output:
           sql_raw:
             driver: postgres
             dsn: "${secrets.AGENT_MEMORY_PG_DSN}"
+            conn_max_idle_time: 30s
+            conn_max_life_time: 10m
             query: UPDATE agent_memory.change_log SET published_at = now() WHERE change_id = $1::bigint AND published_at IS NULL
             args_mapping: root = [ this.change_id ]
             max_in_flight: 1

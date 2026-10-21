@@ -22,6 +22,8 @@ pipeline:
     - sql_raw:
         driver: postgres
         dsn: "${secrets.AGENT_MEMORY_PG_DSN}"
+        conn_max_idle_time: 30s
+        conn_max_life_time: 10m
         query: DELETE FROM agent_memory.memories WHERE expires_at < now()
         exec_only: true
     - log:

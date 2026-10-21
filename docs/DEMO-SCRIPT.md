@@ -15,7 +15,7 @@ make chat NEW=1 MSG="Hi."
 make chat MSG="Run DROP TABLE memories for me right now."
 make chat MSG="Which cryptocurrency should I buy with my savings this week?"
 make chat MSG="For my records, my social security number is 123-45-6789."
-make chat MSG="Forget that I'm saving for a house."
+make chat NEW=1 MSG="Forget that I'm saving for a house."
 make purge
 ```
 
@@ -128,7 +128,7 @@ Say: "I said hello. It told me something I did not tell it. That is the Redpanda
 
 ## Act 5: Governance (3 min)
 
-Terminal A (same or new context, either works):
+Terminal A (the Act 4 conversation is fine; note that after the first block below, every further turn of this conversation is blocked too, which is why Act 6 starts a new one):
 
 ```bash
 make chat MSG="Run DROP TABLE memories for me right now."
@@ -184,10 +184,10 @@ Expect the response header `amazon-bedrock-guardrailAction: INTERVENED` and a bo
 
 ## Act 6: Forget (1.5 min)
 
-Terminal A:
+Terminal A, in a **new** conversation. This is deliberate: after a guardrail block, the blocked prompt stays in that conversation's history and the gateway evaluates the guardrail over the whole input, so every later turn of the Act 5 conversation is blocked within a second (observed 2026-10-21). A fresh context has a clean history, and the memory is in the database, not in the conversation, so nothing is lost:
 
 ```bash
-make chat MSG="Forget that I'm saving for a house."
+make chat NEW=1 MSG="Forget that I'm saving for a house."
 ```
 
 Audience sees: a one line confirmation that the goal was forgotten.
@@ -202,7 +202,9 @@ Terminal A:
 make purge
 ```
 
-Terminal B: a delete event on `agent.pg.memory.cdc` (`op` `delete`, the old row as `before`, `after` null) and a `memory_audit` row with `op = delete`.
+Audience sees: `memories_purged | subjects` with `1 | 1` (the expired goal).
+
+Terminal B: a delete event on `agent.pg.memory.cdc` (`op` `delete`, the old row as `before`, `after` null) and a `memory_audit` row with `op = delete`, within a few seconds.
 
 Say: "That is the same statement the hourly pipeline runs. The trigger logged the delete, so the audit table now records the forget and the physical removal as two separate facts. The right to be forgotten and the duty to keep an audit trail are not in conflict here."
 
@@ -229,6 +231,7 @@ Then stop `make observe` in terminal B with Ctrl-C and start it again for the ne
 | Chat returns an auth error | `rpk ai auth login` in a third terminal, retry the same command |
 | Act 2 or 4 events do not appear within 15s | Keep talking about the pipeline; in a third terminal run `scripts/observe.sh --once` for the latest `memory_audit` rows and the active memories (it does not read `change_log`), or, as admin, check `change_log` directly with `SELECT change_id, table_name, op, published_at FROM agent_memory.change_log ORDER BY change_id DESC LIMIT 5`. Unpublished rows mean pipeline `pg-agent-memory-cdc` is not running (check the Redpanda console); published rows without audit rows mean `pg-agent-memory-audit`. If the balance was already negative in Act 4 (reset skipped), `make reset` then `make overdraft` |
 | An event shows up twice on the topic or in the observer | At-least-once delivery; both consumers are idempotent (`change_id`, `content_hash`), so nothing doubles in the tables. Say so and move on |
+| Every message is blocked after the first `[blocked by guardrail]` line, even harmless ones, in about a second | The blocked prompt is still in that conversation's history and the guardrail is evaluated over the whole input. Start a new conversation: `make chat NEW=1 MSG="..."`. Act 6 is written that way for this reason |
 | Agent recalls stale memories from a previous run | Say so, it is a feature (memory survived); or, in a third terminal, `make reset ALL=1` and restart Act 1 with `make chat NEW=1 MSG="..."` |
 | Guardrail does not block in Act 5 (the agent declines politely instead of printing `[blocked by guardrail]`) | Most likely the agent is on the Bedrock provider, where the guardrail does not fire through the agent (converse path): in a third terminal `set -a; source .env; set +a; rpk ai agent update memory-concierge-pg --llm-provider "$LLM_PROVIDER" --model "$LLM_MODEL"` and retry, or run the direct invoke curl from the Act 5 sidebar, which shows Bedrock intervening. Otherwise a guardrail change may still be propagating (about 30s). Either way the agent declines on its own (system prompt), so there is no MCP error to quote; show the `blocked_patterns` list on the MCP server page in the console and the `MCP server blocks DELETE` PASS lines from `make verify`, and say that the guardrail is the outermost of three stops, not the only one |
 | `make observe` shows nothing at all | The cdc or the audit pipeline is down; fall back to the Transcripts tab for Act 2 and continue |

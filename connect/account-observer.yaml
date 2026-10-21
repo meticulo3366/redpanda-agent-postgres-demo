@@ -102,6 +102,8 @@ output:
   sql_raw:
     driver: postgres
     dsn: "${secrets.AGENT_MEMORY_PG_DSN}"
+    conn_max_idle_time: 30s
+    conn_max_life_time: 10m
     query: >-
       INSERT INTO agent_memory.memories (subject, kind, content, importance, source, source_ref, content_hash, expires_at)
       VALUES ($1,'observation',$2,4,'event-stream',$3,$4, now() + INTERVAL '30 days')
