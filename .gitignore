@@ -18,3 +18,8 @@ __pycache__/
 
 # Prospect-specific material (names customers): never commit to this public repo
 prospects/
+
+# Local PDF/HTML exports of the deck and architecture doc
+export/
+.postgres.env
+adp/agent.yaml

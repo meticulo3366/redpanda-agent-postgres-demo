@@ -1,140 +1,140 @@
 # Unit tests for connect/memory-audit.yaml (rpk connect test connect/tests/memory-audit_test.yaml)
 #
-# Inputs are realistic CockroachDB changefeed envelopes for agent_memory.public.memories
-# (WITH updated, diff, format = json): the Kafka key is the primary key as a JSON
-# array in metadata kafka_key, the value is {"after","before","updated"}; resolved
-# markers are {"resolved": "<hlc>"}. Expected outputs are the exact row objects the
-# sql_raw args_mapping reads: before_doc/after_doc are JSON text (Go-marshalled,
-# keys sorted) because the query casts them with ::jsonb.
+# Inputs are the change envelopes published by connect/pg-cdc.yaml for
+# agent_memory.memories: {"change_id", "table", "op", "row_key", "subject",
+# "before": {...}|null, "after": {...}|null, "changed_at"}, keyed by row_key.
+# Expected outputs are the exact row objects the sql_raw args_mapping reads:
+# before_doc/after_doc are JSON text (Go-marshalled, keys sorted) because the
+# query casts them with ::jsonb.
 tests:
-  - name: insert (before null) becomes an insert audit row
+  - name: insert (before null) becomes an insert audit row keyed by change_id
     target_processors: '../memory-audit.yaml#/pipeline/processors'
     input_batch:
       - metadata:
-          kafka_key: '["3f1c6f6e-6b2a-4d6e-9f1e-0d8f6f0a1b2c"]'
-          kafka_topic: agent.memory.cdc
+          kafka_key: '12'
+          kafka_topic: agent.pg.memory.cdc
         content: |-
-          {"after": {"content": "Prefers short answers", "content_hash": "5d2b8f0c1a7e4b3d9c6f2e1a0b8d7c6e", "created_at": "2026-10-15T14:03:22.123456Z", "expires_at": "2027-01-13T14:03:22.123456Z", "importance": 3, "kind": "preference", "memory_id": "3f1c6f6e-6b2a-4d6e-9f1e-0d8f6f0a1b2c", "search": "'answer':3 'prefer':1 'short':2", "source": "agent", "source_ref": "ctx-7d2a9c1e", "subject": "zeke.dean@redpanda.com", "updated_at": "2026-10-15T14:03:22.123456Z"}, "before": null, "updated": "1760536202123456789.0000000000"}
+          {"change_id": 41, "table": "memories", "op": "insert", "row_key": 12, "subject": "zeke.dean@redpanda.com", "before": null, "after": {"memory_id": 12, "subject": "zeke.dean@redpanda.com", "kind": "preference", "content": "Prefers short answers", "importance": 3, "source": "agent", "source_ref": "chat:2026-10-21", "created_at": "2026-10-21T16:05:12.178381+00:00", "updated_at": "2026-10-21T16:05:12.178381+00:00", "expires_at": "2027-01-19T16:05:12.178381+00:00"}, "changed_at": "2026-10-21T16:05:12.178381+00:00"}
     output_batches:
       - - json_equals:
-            memory_id: 3f1c6f6e-6b2a-4d6e-9f1e-0d8f6f0a1b2c
+            change_id: 41
+            memory_id: 12
             subject: zeke.dean@redpanda.com
             op: insert
             before_doc: null
             after_doc: |-
-              {"content":"Prefers short answers","content_hash":"5d2b8f0c1a7e4b3d9c6f2e1a0b8d7c6e","created_at":"2026-10-15T14:03:22.123456Z","expires_at":"2027-01-13T14:03:22.123456Z","importance":3,"kind":"preference","memory_id":"3f1c6f6e-6b2a-4d6e-9f1e-0d8f6f0a1b2c","search":"'answer':3 'prefer':1 'short':2","source":"agent","source_ref":"ctx-7d2a9c1e","subject":"zeke.dean@redpanda.com","updated_at":"2026-10-15T14:03:22.123456Z"}
-            updated_hlc: "1760536202123456789.0000000000"
+              {"content":"Prefers short answers","created_at":"2026-10-21T16:05:12.178381+00:00","expires_at":"2027-01-19T16:05:12.178381+00:00","importance":3,"kind":"preference","memory_id":12,"source":"agent","source_ref":"chat:2026-10-21","subject":"zeke.dean@redpanda.com","updated_at":"2026-10-21T16:05:12.178381+00:00"}
+            changed_at: "2026-10-21T16:05:12.178381+00:00"
 
   - name: update (before and after) becomes an update audit row with both documents
     target_processors: '../memory-audit.yaml#/pipeline/processors'
     input_batch:
       - metadata:
-          kafka_key: '["8c4e2a10-5b7f-4c3d-a2e1-6f9b0d8c7a54"]'
+          kafka_key: '13'
         content: |-
-          {"after": {"content": "Is saving for a house down payment by next June", "content_hash": "a1e2d3c4b5a69788796a5b4c3d2e1f00", "created_at": "2026-10-15T14:05:40.000001Z", "expires_at": "2026-10-15T14:09:01.500000Z", "importance": 4, "kind": "goal", "memory_id": "8c4e2a10-5b7f-4c3d-a2e1-6f9b0d8c7a54", "search": "'down':6 'hous':5 'june':9 'next':8 'payment':7 'save':2", "source": "agent", "source_ref": "ctx-0b1c2d3e", "subject": "zeke.dean@redpanda.com", "updated_at": "2026-10-15T14:09:01.500000Z"}, "before": {"content": "Is saving for a house down payment by next June", "content_hash": "a1e2d3c4b5a69788796a5b4c3d2e1f00", "created_at": "2026-10-15T14:05:40.000001Z", "expires_at": "2027-01-13T14:05:40.000001Z", "importance": 4, "kind": "goal", "memory_id": "8c4e2a10-5b7f-4c3d-a2e1-6f9b0d8c7a54", "search": "'down':6 'hous':5 'june':9 'next':8 'payment':7 'save':2", "source": "agent", "source_ref": "ctx-7d2a9c1e", "subject": "zeke.dean@redpanda.com", "updated_at": "2026-10-15T14:05:40.000001Z"}, "updated": "1760536541500000000.0000000000"}
+          {"change_id": 42, "table": "memories", "op": "update", "row_key": 13, "subject": "zeke.dean@redpanda.com", "before": {"memory_id": 13, "subject": "zeke.dean@redpanda.com", "kind": "goal", "content": "Is saving for a house down payment by next June", "importance": 4, "expires_at": "2027-01-19T16:06:00+00:00"}, "after": {"memory_id": 13, "subject": "zeke.dean@redpanda.com", "kind": "goal", "content": "Is saving for a house down payment by next June", "importance": 4, "expires_at": "2026-10-21T16:09:01.5+00:00"}, "changed_at": "2026-10-21T16:09:01.5+00:00"}
     output_batches:
       - - json_equals:
-            memory_id: 8c4e2a10-5b7f-4c3d-a2e1-6f9b0d8c7a54
+            change_id: 42
+            memory_id: 13
             subject: zeke.dean@redpanda.com
             op: update
             before_doc: |-
-              {"content":"Is saving for a house down payment by next June","content_hash":"a1e2d3c4b5a69788796a5b4c3d2e1f00","created_at":"2026-10-15T14:05:40.000001Z","expires_at":"2027-01-13T14:05:40.000001Z","importance":4,"kind":"goal","memory_id":"8c4e2a10-5b7f-4c3d-a2e1-6f9b0d8c7a54","search":"'down':6 'hous':5 'june':9 'next':8 'payment':7 'save':2","source":"agent","source_ref":"ctx-7d2a9c1e","subject":"zeke.dean@redpanda.com","updated_at":"2026-10-15T14:05:40.000001Z"}
+              {"content":"Is saving for a house down payment by next June","expires_at":"2027-01-19T16:06:00+00:00","importance":4,"kind":"goal","memory_id":13,"subject":"zeke.dean@redpanda.com"}
             after_doc: |-
-              {"content":"Is saving for a house down payment by next June","content_hash":"a1e2d3c4b5a69788796a5b4c3d2e1f00","created_at":"2026-10-15T14:05:40.000001Z","expires_at":"2026-10-15T14:09:01.500000Z","importance":4,"kind":"goal","memory_id":"8c4e2a10-5b7f-4c3d-a2e1-6f9b0d8c7a54","search":"'down':6 'hous':5 'june':9 'next':8 'payment':7 'save':2","source":"agent","source_ref":"ctx-0b1c2d3e","subject":"zeke.dean@redpanda.com","updated_at":"2026-10-15T14:09:01.500000Z"}
-            updated_hlc: "1760536541500000000.0000000000"
+              {"content":"Is saving for a house down payment by next June","expires_at":"2026-10-21T16:09:01.5+00:00","importance":4,"kind":"goal","memory_id":13,"subject":"zeke.dean@redpanda.com"}
+            changed_at: "2026-10-21T16:09:01.5+00:00"
 
-  - name: delete (after null, row TTL purge) becomes a delete audit row with subject from before
+  - name: delete (after null, the hourly purge) becomes a delete audit row
     target_processors: '../memory-audit.yaml#/pipeline/processors'
     input_batch:
       - metadata:
-          kafka_key: '["8c4e2a10-5b7f-4c3d-a2e1-6f9b0d8c7a54"]'
+          kafka_key: '13'
         content: |-
-          {"after": null, "before": {"content": "Is saving for a house down payment by next June", "content_hash": "a1e2d3c4b5a69788796a5b4c3d2e1f00", "created_at": "2026-10-15T14:05:40.000001Z", "expires_at": "2026-10-15T14:09:01.500000Z", "importance": 4, "kind": "goal", "memory_id": "8c4e2a10-5b7f-4c3d-a2e1-6f9b0d8c7a54", "search": "'down':6 'hous':5 'june':9 'next':8 'payment':7 'save':2", "source": "agent", "source_ref": "ctx-0b1c2d3e", "subject": "zeke.dean@redpanda.com", "updated_at": "2026-10-15T14:09:01.500000Z"}, "updated": "1760540400000000000.0000000000"}
+          {"change_id": 43, "table": "memories", "op": "delete", "row_key": 13, "subject": "zeke.dean@redpanda.com", "before": {"memory_id": 13, "subject": "zeke.dean@redpanda.com", "kind": "goal", "content": "Is saving for a house down payment by next June", "importance": 4}, "after": null, "changed_at": "2026-10-21T17:00:00+00:00"}
     output_batches:
       - - json_equals:
-            memory_id: 8c4e2a10-5b7f-4c3d-a2e1-6f9b0d8c7a54
+            change_id: 43
+            memory_id: 13
             subject: zeke.dean@redpanda.com
             op: delete
             before_doc: |-
-              {"content":"Is saving for a house down payment by next June","content_hash":"a1e2d3c4b5a69788796a5b4c3d2e1f00","created_at":"2026-10-15T14:05:40.000001Z","expires_at":"2026-10-15T14:09:01.500000Z","importance":4,"kind":"goal","memory_id":"8c4e2a10-5b7f-4c3d-a2e1-6f9b0d8c7a54","search":"'down':6 'hous':5 'june':9 'next':8 'payment':7 'save':2","source":"agent","source_ref":"ctx-0b1c2d3e","subject":"zeke.dean@redpanda.com","updated_at":"2026-10-15T14:09:01.500000Z"}
+              {"content":"Is saving for a house down payment by next June","importance":4,"kind":"goal","memory_id":13,"subject":"zeke.dean@redpanda.com"}
             after_doc: null
-            updated_hlc: "1760540400000000000.0000000000"
+            changed_at: "2026-10-21T17:00:00+00:00"
+
+  - name: a missing envelope subject falls back to the document
+    target_processors: '../memory-audit.yaml#/pipeline/processors'
+    input_batch:
+      - content: |-
+          {"change_id": 44, "table": "memories", "op": "delete", "row_key": 14, "subject": null, "before": {"memory_id": 14, "subject": "alice@example.com", "content": "Likes tea"}, "after": null, "changed_at": "2026-10-21T17:00:01+00:00"}
+    output_batches:
+      - - json_equals:
+            change_id: 44
+            memory_id: 14
+            subject: alice@example.com
+            op: delete
+            before_doc: '{"content":"Likes tea","memory_id":14,"subject":"alice@example.com"}'
+            after_doc: null
+            changed_at: "2026-10-21T17:00:01+00:00"
 
   - name: observation written by the observer pipeline is audited like any other insert
     target_processors: '../memory-audit.yaml#/pipeline/processors'
     input_batch:
       - metadata:
-          kafka_key: '["c5d6e7f8-0a1b-4c2d-8e3f-4a5b6c7d8e9f"]'
+          kafka_key: '15'
         content: |-
-          {"after": {"content": "Account 'Everyday Checking' went overdrawn on 2026-10-15: balance moved from 2450.00 to -450.00 USD.", "content_hash": "0f1e2d3c4b5a69788796a5b4c3d2e1f0", "created_at": "2026-10-15T15:12:07.000000Z", "expires_at": "2026-11-14T15:12:07.000000Z", "importance": 4, "kind": "observation", "memory_id": "c5d6e7f8-0a1b-4c2d-8e3f-4a5b6c7d8e9f", "search": "'-450.00':14 '2026-10-15':9 '2450.00':12 'account':1 'balanc':10 'check':4 'everyday':3 'move':11 'overdrawn':7 'usd':15 'went':6", "source": "event-stream", "source_ref": "accounts/1001@1760540400000000000.0000000000", "subject": "zeke.dean@redpanda.com", "updated_at": "2026-10-15T15:12:07.000000Z"}, "before": null, "updated": "1760541127000000000.0000000000"}
+          {"change_id": 45, "table": "memories", "op": "insert", "row_key": 15, "subject": "zeke.dean@redpanda.com", "before": null, "after": {"memory_id": 15, "subject": "zeke.dean@redpanda.com", "kind": "observation", "content": "Account 'Everyday Checking' went overdrawn on 2026-10-15: balance moved from 2450.00 to -450.00 USD.", "importance": 4, "source": "event-stream", "source_ref": "accounts/1001@7"}, "changed_at": "2026-10-15T15:12:07+00:00"}
     output_batches:
       - - json_equals:
-            memory_id: c5d6e7f8-0a1b-4c2d-8e3f-4a5b6c7d8e9f
+            change_id: 45
+            memory_id: 15
             subject: zeke.dean@redpanda.com
             op: insert
             before_doc: null
             after_doc: |-
-              {"content":"Account 'Everyday Checking' went overdrawn on 2026-10-15: balance moved from 2450.00 to -450.00 USD.","content_hash":"0f1e2d3c4b5a69788796a5b4c3d2e1f0","created_at":"2026-10-15T15:12:07.000000Z","expires_at":"2026-11-14T15:12:07.000000Z","importance":4,"kind":"observation","memory_id":"c5d6e7f8-0a1b-4c2d-8e3f-4a5b6c7d8e9f","search":"'-450.00':14 '2026-10-15':9 '2450.00':12 'account':1 'balanc':10 'check':4 'everyday':3 'move':11 'overdrawn':7 'usd':15 'went':6","source":"event-stream","source_ref":"accounts/1001@1760540400000000000.0000000000","subject":"zeke.dean@redpanda.com","updated_at":"2026-10-15T15:12:07.000000Z"}
-            updated_hlc: "1760541127000000000.0000000000"
-
-  - name: resolved marker is dropped
-    target_processors: '../memory-audit.yaml#/pipeline/processors'
-    input_batch:
-      - content: '{"resolved": "1760536210000000000.0000000000"}'
-    output_batches: []
-
-  - name: missing kafka_key falls back to memory_id from the row
-    target_processors: '../memory-audit.yaml#/pipeline/processors'
-    input_batch:
-      - content: |-
-          {"after": {"content": "Prefers short answers", "content_hash": "5d2b8f0c1a7e4b3d9c6f2e1a0b8d7c6e", "created_at": "2026-10-15T14:03:22.123456Z", "expires_at": "2027-01-13T14:03:22.123456Z", "importance": 3, "kind": "preference", "memory_id": "3f1c6f6e-6b2a-4d6e-9f1e-0d8f6f0a1b2c", "search": "'answer':3 'prefer':1 'short':2", "source": "agent", "source_ref": "ctx-7d2a9c1e", "subject": "zeke.dean@redpanda.com", "updated_at": "2026-10-15T14:03:22.123456Z"}, "before": null, "updated": "1760536202123456789.0000000000"}
-    output_batches:
-      - - json_equals:
-            memory_id: 3f1c6f6e-6b2a-4d6e-9f1e-0d8f6f0a1b2c
-            subject: zeke.dean@redpanda.com
-            op: insert
-            before_doc: null
-            after_doc: |-
-              {"content":"Prefers short answers","content_hash":"5d2b8f0c1a7e4b3d9c6f2e1a0b8d7c6e","created_at":"2026-10-15T14:03:22.123456Z","expires_at":"2027-01-13T14:03:22.123456Z","importance":3,"kind":"preference","memory_id":"3f1c6f6e-6b2a-4d6e-9f1e-0d8f6f0a1b2c","search":"'answer':3 'prefer':1 'short':2","source":"agent","source_ref":"ctx-7d2a9c1e","subject":"zeke.dean@redpanda.com","updated_at":"2026-10-15T14:03:22.123456Z"}
-            updated_hlc: "1760536202123456789.0000000000"
+              {"content":"Account 'Everyday Checking' went overdrawn on 2026-10-15: balance moved from 2450.00 to -450.00 USD.","importance":4,"kind":"observation","memory_id":15,"source":"event-stream","source_ref":"accounts/1001@7","subject":"zeke.dean@redpanda.com"}
+            changed_at: "2026-10-15T15:12:07+00:00"
 
   - name: malformed (non-JSON) event is dropped, not forwarded
     target_processors: '../memory-audit.yaml#/pipeline/processors'
     input_batch:
       - metadata:
-          kafka_key: '["3f1c6f6e-6b2a-4d6e-9f1e-0d8f6f0a1b2c"]'
-        content: 'this is not a changefeed envelope'
+          kafka_key: '12'
+        content: 'this is not a change envelope'
     output_batches: []
 
-  - name: JSON without an updated timestamp is dropped
+  - name: JSON that is not a change envelope is dropped
     target_processors: '../memory-audit.yaml#/pipeline/processors'
     input_batch:
       - content: '{"hello": "world"}'
     output_batches: []
 
-  - name: mixed batch keeps only row changes, in order
+  - name: mixed batch keeps only envelopes, in order
     target_processors: '../memory-audit.yaml#/pipeline/processors'
     input_batch:
-      - content: '{"resolved": "1760536200000000000.0000000000"}'
+      - content: '{"resolved": "nothing to see"}'
       - metadata:
-          kafka_key: '["3f1c6f6e-6b2a-4d6e-9f1e-0d8f6f0a1b2c"]'
-        content: '{"after": {"content": "Prefers short answers", "memory_id": "3f1c6f6e-6b2a-4d6e-9f1e-0d8f6f0a1b2c", "subject": "zeke.dean@redpanda.com"}, "before": null, "updated": "1760536202123456789.0000000000"}'
+          kafka_key: '12'
+        content: '{"change_id": 46, "table": "memories", "op": "insert", "row_key": 12, "subject": "zeke.dean@redpanda.com", "before": null, "after": {"content": "Prefers short answers", "memory_id": 12, "subject": "zeke.dean@redpanda.com"}, "changed_at": "2026-10-21T18:00:00+00:00"}'
       - metadata:
-          kafka_key: '["3f1c6f6e-6b2a-4d6e-9f1e-0d8f6f0a1b2c"]'
-        content: '{"after": null, "before": {"content": "Prefers short answers", "memory_id": "3f1c6f6e-6b2a-4d6e-9f1e-0d8f6f0a1b2c", "subject": "zeke.dean@redpanda.com"}, "updated": "1760536299000000000.0000000000"}'
-      - content: '{"resolved": "1760536300000000000.0000000000"}'
+          kafka_key: '12'
+        content: '{"change_id": 47, "table": "memories", "op": "delete", "row_key": 12, "subject": "zeke.dean@redpanda.com", "before": {"content": "Prefers short answers", "memory_id": 12, "subject": "zeke.dean@redpanda.com"}, "after": null, "changed_at": "2026-10-21T18:00:05+00:00"}'
+      - content: 'garbage'
     output_batches:
       - - json_equals:
-            memory_id: 3f1c6f6e-6b2a-4d6e-9f1e-0d8f6f0a1b2c
+            change_id: 46
+            memory_id: 12
             subject: zeke.dean@redpanda.com
             op: insert
             before_doc: null
-            after_doc: '{"content":"Prefers short answers","memory_id":"3f1c6f6e-6b2a-4d6e-9f1e-0d8f6f0a1b2c","subject":"zeke.dean@redpanda.com"}'
-            updated_hlc: "1760536202123456789.0000000000"
+            after_doc: '{"content":"Prefers short answers","memory_id":12,"subject":"zeke.dean@redpanda.com"}'
+            changed_at: "2026-10-21T18:00:00+00:00"
         - json_equals:
-            memory_id: 3f1c6f6e-6b2a-4d6e-9f1e-0d8f6f0a1b2c
+            change_id: 47
+            memory_id: 12
             subject: zeke.dean@redpanda.com
             op: delete
-            before_doc: '{"content":"Prefers short answers","memory_id":"3f1c6f6e-6b2a-4d6e-9f1e-0d8f6f0a1b2c","subject":"zeke.dean@redpanda.com"}'
+            before_doc: '{"content":"Prefers short answers","memory_id":12,"subject":"zeke.dean@redpanda.com"}'
             after_doc: null
-            updated_hlc: "1760536299000000000.0000000000"
+            changed_at: "2026-10-21T18:00:05+00:00"

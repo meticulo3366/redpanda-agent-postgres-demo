@@ -1,39 +1,42 @@
-# Managed SQL MCP server for the Memory Concierge (docs/DESIGN.md section 7).
-# Create: rpk ai mcp-server create crdb-agent-memory -f adp/mcp-server.yaml --enabled
-# Update: rpk ai mcp-server update crdb-agent-memory -f adp/mcp-server.yaml
-# The DSN is the AGENT_MEMORY_CRDB_DSN secret (scope SCOPE_MCP_SERVER), created by scripts/20-redpanda-setup.sh.
+# Managed SQL MCP server for the Memory Concierge on PostgreSQL (docs/PORT-CONTRACT.md section 7).
+# Create: rpk ai mcp-server create pg-agent-memory -f adp/mcp-server.yaml --enabled
+# Update: rpk ai mcp-server update pg-agent-memory -f adp/mcp-server.yaml
+# The DSN is the AGENT_MEMORY_PG_DSN secret (scope SCOPE_MCP_SERVER), created by scripts/20-redpanda-setup.sh.
 '@type': type.googleapis.com/redpanda.api.adp.v1alpha1.MCPServer
-name: crdb-agent-memory
-description: CockroachDB Cloud - customer accounts (read) and agent memory (read/write) for memory-concierge
+name: pg-agent-memory
+description: PostgreSQL (GantrySQL) - customer accounts (read) and agent memory (read/write) for memory-concierge-pg
 enabled: true
 managed:
   config:
     '@type': type.googleapis.com/redpanda.mcps.sql.v1.SQLMCPConfig
-    # "postgres" is the driver every verified SQL MCP server on this cluster uses
-    # (blotter-sql, pricing-sql, refdata-sql, rollup-sql); CockroachDB speaks the
-    # Postgres wire protocol and the Let's Encrypt server cert satisfies sslmode=verify-full.
+    # GantrySQL speaks the PostgreSQL wire protocol; the server requires TLS
+    # (the DSN carries sslmode=require).
     driver: postgres
-    dsn: ${secrets.AGENT_MEMORY_CRDB_DSN}
+    dsn: ${secrets.AGENT_MEMORY_PG_DSN}
     connection_pool:
       max_open_conns: 5
       max_idle_conns: 2
     guardrails:
       readonly: false
       # Declared for the console form only: the managed SQL MCP server does NOT
-      # enforce allowed_schemas (vendor docs, "Limitations"). Schema access is
-      # really restricted by the agent_rw grants in cockroach/02-roles.sql.
-      allowed_schemas: [public]
-      # blocked_patterns ARE enforced on every query/execute statement. The last
-      # pattern blocks catalog probing (information_schema, pg_catalog), which any
-      # role can read; note it also blocks the docs' Inspector smoke test
+      # enforce allowed_schemas (vendor docs, "Limitations"). Every statement in
+      # adp/system-prompt.md is schema-qualified (agent_memory.<table>).
+      allowed_schemas: [agent_memory]
+      # blocked_patterns ARE enforced on every query/execute statement. On this
+      # server the agent connects as the admin user (no CREATE ROLE), so these
+      # patterns are the database write boundary: no DDL, no DELETE (forgetting is
+      # an UPDATE of expires_at), no writes to the system of record or the audit
+      # trail, no access to the change_log plumbing, no catalog probing. Note the
+      # last pattern also blocks the docs' Inspector smoke test
       # `SELECT ... FROM information_schema.tables` (use `SELECT 1` instead).
       blocked_patterns:
-        - (?i)\b(DROP|TRUNCATE|ALTER|CREATE|GRANT|REVOKE|COPY|MERGE)\b
+        - (?i)\b(DROP|TRUNCATE|ALTER|CREATE|GRANT|REVOKE|COPY|MERGE|VACUUM|ANALYZE|REINDEX|CLUSTER)\b
         - (?i)\bDELETE\b
-        - (?i)\bSET\s+(SESSION|ROLE|default_transaction)
+        - (?i)\b(INSERT\s+INTO|UPDATE)\s+(agent_memory\.)?(memory_audit|accounts|customers|transactions)\b
+        - (?i)\bchange_log\b
+        - (?i)\bSET\s+(SESSION|ROLE|default_transaction|search_path)
         - (?i)\bset_config\b
-        - (?i)\bpg_(read|ls|stat_file|sleep)
-        - (?i)\bcrdb_internal\b
+        - (?i)\bpg_(read|ls|stat_file|sleep|terminate|cancel|reload)
         - (?i)\b(information_schema|pg_catalog)\b
       max_rows_default: 50
       max_rows_limit: 200

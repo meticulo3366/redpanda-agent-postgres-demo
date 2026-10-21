@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/50-deploy-agent.sh - deploy the Memory Concierge to Redpanda ADP
-# (docs/DESIGN.md section 7), in this order:
+# (docs/PORT-CONTRACT.md section 7), in this order:
 #
 #   1. LLM providers (rpk ai llm-provider, create if missing): BEDROCK_PROVIDER,
 #                     the guardrail's backend and own-account billing alternative,
@@ -10,7 +10,7 @@
 #                     falling back to detach + DeleteGuardrail + CreateGuardrail;
 #                     wait READY)
 #   3. Attach the guardrail to both providers (rpk ai llm-provider update --guardrail)
-#   4. Check the AGENT_MEMORY_CRDB_DSN secret exists (created by 20-redpanda-setup.sh)
+#   4. Check the AGENT_MEMORY_PG_DSN secret exists (created by 20-redpanda-setup.sh)
 #   5. MCP server    (rpk ai mcp-server create / update -f adp/mcp-server.yaml)
 #   6. Cedar policies (rpk ai policy create, or update when the .cedar file changed;
 #                     warns when .env names a provider or MCP server the .cedar
@@ -48,16 +48,16 @@ BEDROCK_MODEL="${BEDROCK_MODEL:-us.anthropic.claude-sonnet-4-6}"
 # Secret store reference for the Anthropic API key (org-shared, scope SCOPE_AI_GATEWAY).
 ANTHROPIC_API_KEY_REF="${ANTHROPIC_API_KEY_REF:-ANTHROPIC_API_KEY}"
 GUARDRAIL_NAME="${GUARDRAIL_NAME:-agent-memory-guardrail}"
-MCP_SERVER_NAME="${MCP_SERVER_NAME:-crdb-agent-memory}"
-AGENT_NAME="${AGENT_NAME:-memory-concierge}"
-DSN_SECRET_ID="AGENT_MEMORY_CRDB_DSN"
+MCP_SERVER_NAME="${MCP_SERVER_NAME:-pg-agent-memory}"
+AGENT_NAME="${AGENT_NAME:-memory-concierge-pg}"
+DSN_SECRET_ID="AGENT_MEMORY_PG_DSN"
 DRY_RUN="${DRY_RUN:-0}"
 AGENT_WAIT_SECS="${AGENT_WAIT_SECS:-180}"
 GUARDRAIL_WAIT_SECS="${GUARDRAIL_WAIT_SECS:-180}"
 PROMPT_MAX_BYTES=12288
 
 for f in "$TEMPLATE" "$PROMPT" "$MCP_MANIFEST" "$GUARDRAIL_FILE" \
-         "$POLICY_DIR/memory-concierge-mcp.cedar" "$POLICY_DIR/memory-concierge-llm.cedar"; do
+         "$POLICY_DIR/memory-concierge-pg-mcp.cedar" "$POLICY_DIR/memory-concierge-pg-llm.cedar"; do
   [[ -f "$f" ]] || die "missing file: $f"
 done
 
@@ -101,7 +101,7 @@ else
     --bedrock-config.static-credentials.secret-access-key-ref ZEKE_BEDROCK_INVOKER_SECRET \
     --provider-models "us.anthropic.claude-sonnet-4-6,us.anthropic.claude-opus-4-8,us.anthropic.claude-haiku-4-5-20251001-v1:0" \
     --transcripts.record-input-messages --transcripts.record-output-messages \
-    --tags demo=agent-memory --tags owner=zeke.dean --tags stack=cockroachdb-redpanda
+    --tags demo=agent-memory --tags owner=zeke.dean
   ok "Bedrock provider $BEDROCK_PROVIDER created"
 fi
 
@@ -120,7 +120,7 @@ else
       --anthropic-config.api-key-ref "$ANTHROPIC_API_KEY_REF" \
       --provider-models "claude-sonnet-4-6,claude-haiku-4-5" \
       --transcripts.record-input-messages --transcripts.record-output-messages \
-      --tags demo=agent-memory --tags owner=zeke.dean --tags stack=cockroachdb-redpanda
+      --tags demo=agent-memory --tags owner=zeke.dean
     ok "agent provider $LLM_PROVIDER created (Anthropic, API key ref $ANTHROPIC_API_KEY_REF)"
   fi
 fi
@@ -349,23 +349,23 @@ ensure_policy() {
     ok "policy $name created"
   fi
 }
-ensure_policy memory-concierge-mcp \
-  "Agent grant: memory-concierge - crdb-agent-memory" \
-  "memory-concierge may open MCP sessions and call tools on crdb-agent-memory, and no other MCP server." \
-  "$POLICY_DIR/memory-concierge-mcp.cedar"
-ensure_policy memory-concierge-llm \
-  "Agent grant: memory-concierge - its LLM provider" \
-  "memory-concierge may invoke the $LLM_PROVIDER and $BEDROCK_PROVIDER providers only." \
-  "$POLICY_DIR/memory-concierge-llm.cedar"
+ensure_policy memory-concierge-pg-mcp \
+  "Agent grant: memory-concierge-pg - pg-agent-memory" \
+  "memory-concierge-pg may open MCP sessions and call tools on pg-agent-memory, and no other MCP server." \
+  "$POLICY_DIR/memory-concierge-pg-mcp.cedar"
+ensure_policy memory-concierge-pg-llm \
+  "Agent grant: memory-concierge-pg - its LLM provider" \
+  "memory-concierge-pg may invoke the $LLM_PROVIDER and $BEDROCK_PROVIDER providers only." \
+  "$POLICY_DIR/memory-concierge-pg-llm.cedar"
 # The .cedar files name the providers and the MCP server literally, while .env
 # makes them configurable. With a name the policy does not permit, the agent
 # still reaches RUNNING and is then denied on its first call, so say so here.
 for p in "$LLM_PROVIDER" "$BEDROCK_PROVIDER"; do
-  grep -qF "LLMProvider::\"$p\"" "$POLICY_DIR/memory-concierge-llm.cedar" \
-    || warn "policy memory-concierge-llm does not permit provider $p; the agent will be denied LLMProvider.invoke (edit adp/policies/memory-concierge-llm.cedar)"
+  grep -qF "LLMProvider::\"$p\"" "$POLICY_DIR/memory-concierge-pg-llm.cedar" \
+    || warn "policy memory-concierge-pg-llm does not permit provider $p; the agent will be denied LLMProvider.invoke (edit adp/policies/memory-concierge-pg-llm.cedar)"
 done
-grep -qF "McpServer::\"$MCP_SERVER_NAME\"" "$POLICY_DIR/memory-concierge-mcp.cedar" \
-  || warn "policy memory-concierge-mcp does not permit MCP server $MCP_SERVER_NAME; the agent will be denied McpServer.* (edit adp/policies/memory-concierge-mcp.cedar)"
+grep -qF "McpServer::\"$MCP_SERVER_NAME\"" "$POLICY_DIR/memory-concierge-pg-mcp.cedar" \
+  || warn "policy memory-concierge-pg-mcp does not permit MCP server $MCP_SERVER_NAME; the agent will be denied McpServer.* (edit adp/policies/memory-concierge-pg-mcp.cedar)"
 
 # ------------------------------------------------------------------ 7. agent
 info "[7/7] Agent: $AGENT_NAME"

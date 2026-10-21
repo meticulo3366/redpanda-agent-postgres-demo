@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
 # 00-preflight.sh - check tools and logins, create .env on first run, verify
-# CockroachDB and Redpanda Data Plane API connectivity.
+# PostgreSQL and Redpanda Data Plane API connectivity.
 #
+# .env is written from .postgres.env (gitignored; PGHOST, PGPORT, PGDATABASE,
+# PGUSER, PGPASSWORD, optionally PG_AGENT_USER and PG_AGENT_PASSWORD when the
+# server lets you create a least-privilege role) plus the fixed names in
+# docs/PORT-CONTRACT.md section 2 and a generated Kafka password.
 # Idempotent: an existing .env is never overwritten.
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 
-# Fixed values from docs/DESIGN.md sections 2-4.
-FIXED_CRDB_DATABASE="agent_memory"
-FIXED_CRDB_AGENT_USER="agent_rw"
+# Fixed values from docs/PORT-CONTRACT.md sections 2-3.
+FIXED_PG_SCHEMA="agent_memory"
 FIXED_REDPANDA_BROKERS="seed-8a6dfc25.d6kjl4h19241bg3ek3h0.byoc.prd.cloud.redpanda.com:9092"
 FIXED_REDPANDA_DATAPLANE_API="https://api-8a6dfc25.d6kjl4h19241bg3ek3h0.byoc.prd.cloud.redpanda.com"
 FIXED_REDPANDA_SCHEMA_REGISTRY_URL="https://schema-registry-0d1ddabe.d6kjl4h19241bg3ek3h0.byoc.prd.cloud.redpanda.com:30081"
-FIXED_KAFKA_USER="agent-memory-demo"
-FIXED_TOPIC_MEMORY_CDC="agent.memory.cdc"
-FIXED_TOPIC_ACCOUNTS_CDC="agent.accounts.cdc"
+# This demo's own SASL user (the CockroachDB demo on the same cluster has its own).
+FIXED_KAFKA_USER="agent-memory-pg-demo"
+FIXED_TOPIC_MEMORY_CDC="agent.pg.memory.cdc"
+FIXED_TOPIC_ACCOUNTS_CDC="agent.pg.accounts.cdc"
 FIXED_ADP_ENV="adp-production"
 FIXED_AIGW_URL="https://aigw.d6kjl4h19241bg3ek3h0.clusters.rdpa.co"
 # The agent runs on the Anthropic provider: for non-Bedrock providers the AI
@@ -27,8 +31,8 @@ FIXED_LLM_MODEL="claude-sonnet-4-6"
 FIXED_BEDROCK_PROVIDER="zeke-bedrock-agent-memory"
 FIXED_BEDROCK_MODEL="us.anthropic.claude-sonnet-4-6"
 FIXED_GUARDRAIL_NAME="agent-memory-guardrail"
-FIXED_MCP_SERVER_NAME="crdb-agent-memory"
-FIXED_AGENT_NAME="memory-concierge"
+FIXED_MCP_SERVER_NAME="pg-agent-memory"
+FIXED_AGENT_NAME="memory-concierge-pg"
 FIXED_DEMO_USER_EMAIL="zeke.dean@redpanda.com"
 
 # 32 URL-safe alphanumeric characters (no percent-encoding needed in DSNs/URIs).
@@ -38,6 +42,17 @@ gen_password() {
   [[ ${#p} -eq 32 ]] || die "password generation failed"
   printf '%s' "$p"
 }
+
+# pg_env_get <file> <KEY>: the value of KEY=value in a .postgres.env file,
+# without sourcing it (so PGPASSWORD never lands in this shell's environment).
+# Surrounding single or double quotes are stripped.
+pg_env_get() {
+  local v
+  v="$(grep -E "^[[:space:]]*(export[[:space:]]+)?$2=" "$1" | head -1 | sed -E 's/^[[:space:]]*(export[[:space:]]+)?[A-Z_]+=//' | tr -d '\r' || true)"
+  v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+  printf '%s' "$v"
+}
+urlenc() { jq -rn --arg v "$1" '$v|@uri'; }
 
 # ---------------------------------------------------------------------------
 info "Checking required tools"
@@ -53,45 +68,35 @@ ok "jq $(jq --version 2>/dev/null)"
 ok "curl $(curl --version 2>/dev/null | head -1 | awk '{print $2}')"
 
 # ---------------------------------------------------------------------------
-info "Checking ADP login (rpk ai auth status)"
-status_json="$(rpk ai auth status -o json 2>/dev/null || true)"
-logged_in="$(jq -r '.logged_in // false' <<<"$status_json" 2>/dev/null || echo false)"
-env_name="$(jq -r '.environment // ""' <<<"$status_json" 2>/dev/null || true)"
-[[ "$logged_in" == "true" ]] || die "rpk ai is not logged in; run: rpk ai auth login"
-[[ "$env_name" == "$FIXED_ADP_ENV" ]] || die "rpk ai environment is '${env_name:-unset}', expected '$FIXED_ADP_ENV'; run: rpk ai env use $FIXED_ADP_ENV"
-ok "logged in as $(jq -r '.user_email // "?"' <<<"$status_json") to $env_name (token expires $(jq -r '.expires_at // "?"' <<<"$status_json"))"
-
-# ---------------------------------------------------------------------------
 if [[ -f "$ENV_FILE" ]]; then
   info ".env already exists; leaving it untouched ($ENV_FILE)"
 else
-  info "Creating .env from .cockroachlabs.env"
-  crl="$REPO_ROOT/.cockroachlabs.env"
-  [[ -f "$crl" ]] || die "$crl not found. In CockroachDB Cloud open Connect > Connection string, save the generated text as .cockroachlabs.env (gitignored) and re-run."
+  info "Creating .env from .postgres.env"
+  pgenv="$REPO_ROOT/.postgres.env"
+  [[ -f "$pgenv" ]] || die "$pgenv not found. Create it (gitignored, mode 600) with PGHOST, PGPORT, PGDATABASE, PGUSER and PGPASSWORD for the target server (see .env.example) and re-run."
 
-  raw="$(grep -m1 -E '^[[:space:]]*postgres(ql)?://' "$crl" | tr -d '\r' | sed -E 's/^[[:space:]]+//' || true)"
-  [[ -n "$raw" ]] || die "no postgresql:// connection string found in $crl"
-
-  # Split "postgresql://user:pw@host:port/db?query" into prefix (without db) and query.
-  no_query="${raw%%\?*}"
-  query=""
-  [[ "$raw" == *\?* ]] && query="${raw#*\?}"
-  prefix="${no_query%/*}"                       # postgresql://user:pw@host:port
-  [[ "$prefix" == postgresql://*@* || "$prefix" == postgres://*@* ]] || die "unexpected connection string shape in $crl"
-  hostport="${prefix#*://}"; hostport="${hostport##*@}"
-  [[ "$hostport" == *:* ]] || hostport="$hostport:26257"
-
-  # Rewrite sslmode to require (psql has no ~/.postgresql/root.crt here); keep other params.
-  new_query="sslmode=require"
-  if [[ -n "$query" ]]; then
-    while IFS= read -r kv; do
-      [[ -z "$kv" || "$kv" == sslmode=* ]] && continue
-      new_query="$new_query&$kv"
-    done < <(tr '&' '\n' <<<"$query")
+  pghost="$(pg_env_get "$pgenv" PGHOST)"
+  pgport="$(pg_env_get "$pgenv" PGPORT)"; [[ -n "$pgport" ]] || pgport=5432
+  pgdb="$(pg_env_get "$pgenv" PGDATABASE)"
+  pguser="$(pg_env_get "$pgenv" PGUSER)"
+  pgpass="$(pg_env_get "$pgenv" PGPASSWORD)"
+  [[ -n "$pghost" && -n "$pgdb" && -n "$pguser" && -n "$pgpass" ]] || die "$pgenv must set PGHOST, PGDATABASE, PGUSER and PGPASSWORD"
+  # Least-privilege role, when the server lets you create one; else the admin user.
+  # Both halves or neither: a role name with the admin's password would only fail later.
+  agent_user="$(pg_env_get "$pgenv" PG_AGENT_USER)"
+  agent_pass="$(pg_env_get "$pgenv" PG_AGENT_PASSWORD)"
+  if [[ -n "$agent_user" && -z "$agent_pass" ]] || [[ -z "$agent_user" && -n "$agent_pass" ]]; then
+    die "set both PG_AGENT_USER and PG_AGENT_PASSWORD in $pgenv, or neither"
   fi
-  admin_url="$prefix/$FIXED_CRDB_DATABASE?$new_query"
+  [[ -n "$agent_user" ]] || agent_user="$pguser"
+  [[ -n "$agent_pass" ]] || agent_pass="$pgpass"
+  # .env is sourced by bash, and these two values come from the server, not from a
+  # generator: write them as bash-safe literals so quotes, dollars, backslashes and
+  # backticks in a password cannot break or execute anything in load_env.
+  agent_user_q="$(printf '%q' "$agent_user")"
+  agent_pass_q="$(printf '%q' "$agent_pass")"
 
-  pw_db="$(gen_password)"
+  admin_url="postgresql://$(urlenc "$pguser"):$(urlenc "$pgpass")@${pghost}:${pgport}/${pgdb}?sslmode=require&options=-c%20search_path%3D${FIXED_PG_SCHEMA},public"
   pw_kafka="$(gen_password)"
 
   old_umask="$(umask)"
@@ -101,12 +106,14 @@ else
 # Generated by scripts/00-preflight.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ). Gitignored. Do not commit.
 # See .env.example for documentation of every variable.
 
-# CockroachDB (admin URL copied from .cockroachlabs.env, psql-safe sslmode)
-CRDB_ADMIN_URL="$admin_url"
-CRDB_HOST="$hostport"
-CRDB_DATABASE="$FIXED_CRDB_DATABASE"
-CRDB_AGENT_USER="$FIXED_CRDB_AGENT_USER"
-CRDB_AGENT_PASSWORD="$pw_db"
+# PostgreSQL (admin URL built from .postgres.env; TLS required; search_path for psql)
+PG_ADMIN_URL="$admin_url"
+PG_HOST="${pghost}:${pgport}"
+PG_DATABASE="$pgdb"
+PG_SCHEMA="$FIXED_PG_SCHEMA"
+# User the MCP server and the pipelines connect as (the admin user when the server has no CREATE ROLE)
+PG_AGENT_USER=$agent_user_q
+PG_AGENT_PASSWORD=$agent_pass_q
 
 # Redpanda Cloud
 REDPANDA_BROKERS="$FIXED_REDPANDA_BROKERS"
@@ -135,26 +142,44 @@ ENVEOF
   mv "$tmp" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
   umask "$old_umask"
-  ok "wrote $ENV_FILE (mode 600; database $FIXED_CRDB_DATABASE on $hostport; generated CRDB_AGENT_PASSWORD and KAFKA_PASSWORD)"
+  ok "wrote $ENV_FILE (mode 600; database $pgdb on ${pghost}:${pgport}; generated KAFKA_PASSWORD)"
 fi
 
 mkdir -p "$STATE_DIR"
 ok "state directory $STATE_DIR"
 
 load_env
-if ! grep -qE '^BEDROCK_PROVIDER=' "$ENV_FILE"; then
-  log "note: BEDROCK_PROVIDER/BEDROCK_MODEL are not in $ENV_FILE; using the defaults $BEDROCK_PROVIDER / $BEDROCK_MODEL (see .env.example)"
-fi
 ok "agent provider $LLM_PROVIDER ($LLM_MODEL); guardrail backend $BEDROCK_PROVIDER ($BEDROCK_MODEL)"
 
 # ---------------------------------------------------------------------------
-info "Verifying CockroachDB connectivity (SELECT 1 as admin)"
-if ! out="$(crdb_admin_psql "SELECT 1" -At 2>&1)"; then
-  die "cannot connect with CRDB_ADMIN_URL: $out
-Hints: the database '$CRDB_DATABASE' must exist (as admin: CREATE DATABASE $CRDB_DATABASE); if the admin password changed, delete .env and re-run."
+info "Verifying PostgreSQL connectivity (as the admin user)"
+if ! out="$(pg_admin_psql "SELECT version()" -At 2>&1)"; then
+  die "cannot connect with PG_ADMIN_URL: $out
+Hints: the database '$PG_DATABASE' must exist and accept TLS connections; if the password changed, delete .env and re-run."
 fi
-[[ "$out" == "1" ]] || die "unexpected result from SELECT 1: $out"
-ok "CockroachDB reachable: $CRDB_HOST, database $CRDB_DATABASE"
+ok "PostgreSQL reachable: $PG_HOST, database $PG_DATABASE"
+log "    server: ${out:0:100}"
+wal="$(pg_admin_psql "SHOW wal_level" -At 2>/dev/null || echo unknown)"
+if [[ "$wal" == "logical" ]]; then
+  log "    wal_level = logical (the trigger-fed change_log still works; a postgres_cdc input would be possible too)"
+else
+  log "    wal_level = $wal: no logical decoding, so change capture is the trigger-fed change_log table (docs/PORT-CONTRACT.md section 1)"
+fi
+can_role="$(pg_admin_psql "SELECT rolcreaterole FROM pg_roles WHERE rolname = current_user" -At 2>/dev/null || echo "?")"
+if [[ "$can_role" == "t" ]]; then
+  log "    current user may CREATE ROLE: set PG_AGENT_USER/PG_AGENT_PASSWORD in .postgres.env for a least-privilege agent role"
+else
+  log "    current user cannot CREATE ROLE: the agent connects as $PG_AGENT_USER; the MCP server's blocked patterns carry the write restrictions"
+fi
+
+# ---------------------------------------------------------------------------
+info "Checking ADP login (rpk ai auth status)"
+status_json="$(rpk ai auth status -o json 2>/dev/null || true)"
+logged_in="$(jq -r '.logged_in // false' <<<"$status_json" 2>/dev/null || echo false)"
+env_name="$(jq -r '.environment // ""' <<<"$status_json" 2>/dev/null || true)"
+[[ "$logged_in" == "true" ]] || die "rpk ai is not logged in; run: rpk ai auth login"
+[[ "$env_name" == "$FIXED_ADP_ENV" ]] || die "rpk ai environment is '${env_name:-unset}', expected '$FIXED_ADP_ENV'; run: rpk ai env use $FIXED_ADP_ENV"
+ok "logged in as $(jq -r '.user_email // "?"' <<<"$status_json") to $env_name (token expires $(jq -r '.expires_at // "?"' <<<"$status_json"))"
 
 # ---------------------------------------------------------------------------
 info "Verifying Redpanda Data Plane API (GET /v1/topics?page_size=1)"

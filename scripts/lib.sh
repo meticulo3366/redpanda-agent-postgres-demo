@@ -3,12 +3,12 @@
 #
 # Source it, never execute it:   source "$(dirname "$0")/lib.sh"
 #
-# Public surface (docs/DESIGN.md section 8; other scripts call these by name):
+# Public surface (docs/PORT-CONTRACT.md section 8; other scripts call these by name):
 #   REPO_ROOT ENV_FILE STATE_DIR
 #   log info ok warn die
 #   load_env require_cmd
 #   rp_token rp_api aigw_rpc
-#   crdb_admin_psql crdb_admin_psql_file crdb_agent_url
+#   pg_admin_psql pg_admin_psql_file pg_agent_url
 #   rpk_kafka
 # Names starting with "_" are private to this file.
 
@@ -42,19 +42,18 @@ load_env() {
   # shellcheck disable=SC1090
   source "$ENV_FILE"
   set +a
-  # Every required variable documented in .env.example (docs/DESIGN.md section 4);
-  # the scripts dereference all of them under set -u.
+  # Every required variable documented in .env.example (docs/PORT-CONTRACT.md
+  # section 3); the scripts dereference all of them under set -u.
   local v
-  for v in CRDB_ADMIN_URL CRDB_HOST CRDB_DATABASE CRDB_AGENT_USER CRDB_AGENT_PASSWORD \
+  for v in PG_ADMIN_URL PG_HOST PG_DATABASE PG_SCHEMA PG_AGENT_USER PG_AGENT_PASSWORD \
            REDPANDA_BROKERS REDPANDA_DATAPLANE_API REDPANDA_SCHEMA_REGISTRY_URL \
            KAFKA_USER KAFKA_PASSWORD TOPIC_MEMORY_CDC TOPIC_ACCOUNTS_CDC \
            ADP_ENV AIGW_URL LLM_PROVIDER LLM_MODEL GUARDRAIL_NAME MCP_SERVER_NAME \
            AGENT_NAME DEMO_USER_EMAIL; do
     [[ -n "${!v:-}" ]] || die "$v is not set in $ENV_FILE (compare with .env.example)"
   done
-  # Optional, with defaults, so a .env written before the agent moved to the
-  # Anthropic provider keeps working: the Bedrock provider is the guardrail's
-  # backend and the alternative provider for own-account billing (.env.example).
+  # Optional, with defaults: the Bedrock provider is the guardrail's backend and
+  # the alternative provider for own-account billing (.env.example).
   : "${BEDROCK_PROVIDER:=zeke-bedrock-agent-memory}"
   : "${BEDROCK_MODEL:=us.anthropic.claude-sonnet-4-6}"
   export BEDROCK_PROVIDER BEDROCK_MODEL
@@ -140,32 +139,40 @@ aigw_rpc() {
 }
 
 # ---------------------------------------------------------------------------
-# CockroachDB helpers
+# PostgreSQL helpers
 # ---------------------------------------------------------------------------
-# crdb_admin_psql "<sql>" [extra psql args]   e.g. crdb_admin_psql "SELECT 1" -At
-crdb_admin_psql() {
+# pg_admin_psql "<sql>" [extra psql args]   e.g. pg_admin_psql "SELECT 1" -At
+# PG_ADMIN_URL carries sslmode=require and search_path=agent_memory,public, but
+# the SQL in this repository schema-qualifies every table anyway.
+pg_admin_psql() {
   local sql="$1"; shift
-  psql "${CRDB_ADMIN_URL:?CRDB_ADMIN_URL unset; call load_env}" -v ON_ERROR_STOP=1 -X -q "$@" -c "$sql"
+  psql "${PG_ADMIN_URL:?PG_ADMIN_URL unset; call load_env}" -v ON_ERROR_STOP=1 -X -q "$@" -c "$sql"
 }
 
-# crdb_admin_psql_file <file> [extra psql args]   e.g. crdb_admin_psql_file cockroach/02-roles.sql -v agent_password="$PW"
-crdb_admin_psql_file() {
+# pg_admin_psql_file <file> [extra psql args]   e.g. pg_admin_psql_file postgres/01-schema.sql
+pg_admin_psql_file() {
   local file="$1"; shift
   [[ -f "$file" ]] || die "SQL file not found: $file"
-  psql "${CRDB_ADMIN_URL:?CRDB_ADMIN_URL unset; call load_env}" -v ON_ERROR_STOP=1 -X -q "$@" -f "$file"
+  psql "${PG_ADMIN_URL:?PG_ADMIN_URL unset; call load_env}" -v ON_ERROR_STOP=1 -X -q "$@" -f "$file"
 }
 
-# crdb_agent_url: the least-privilege DSN used by the MCP server and pipelines
-# (Go clients accept verify-full because the server cert is publicly trusted).
-crdb_agent_url() {
-  printf 'postgresql://%s:%s@%s/%s?sslmode=verify-full\n' \
-    "${CRDB_AGENT_USER:?}" "${CRDB_AGENT_PASSWORD:?}" "${CRDB_HOST:?}" "${CRDB_DATABASE:?}"
+# pg_agent_url: the DSN used by the MCP server and the Connect pipelines (the
+# value of the AGENT_MEMORY_PG_DSN secret). On a server without CREATE ROLE the
+# agent user is the admin user; the SQL that reaches the database is then
+# limited by the MCP server's blocked patterns, not by grants. User and password
+# are percent-encoded; TLS is required; no search_path (every statement the
+# pipelines and the agent run is schema-qualified).
+pg_agent_url() {
+  local user pw
+  user="$(jq -rn --arg v "${PG_AGENT_USER:?}" '$v|@uri')"
+  pw="$(jq -rn --arg v "${PG_AGENT_PASSWORD:?}" '$v|@uri')"
+  printf 'postgresql://%s:%s@%s/%s?sslmode=require\n' "$user" "$pw" "${PG_HOST:?}" "${PG_DATABASE:?}"
 }
 
 # ---------------------------------------------------------------------------
 # Kafka protocol via rpk with explicit flags (the cloud profile is not logged in)
 # ---------------------------------------------------------------------------
-# rpk_kafka <args...>   e.g. rpk_kafka topic consume agent.memory.cdc -o end -f '%k %v\n'
+# rpk_kafka <args...>   e.g. rpk_kafka topic consume agent.pg.memory.cdc -o end -f '%k %v\n'
 rpk_kafka() {
   rpk -X brokers="${REDPANDA_BROKERS:?}" -X tls.enabled=true -X sasl.mechanism=SCRAM-SHA-256 \
       -X user="${KAFKA_USER:?}" -X pass="${KAFKA_PASSWORD:?}" "$@"

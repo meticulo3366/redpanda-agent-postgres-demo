@@ -1,13 +1,13 @@
-# agent-memory-observer
+# pg-agent-memory-observer
 #
-# Watches the CockroachDB changefeed on agent.accounts.cdc and turns notable
-# account events into observation memories, so the Memory Concierge remembers
-# what happened to the customer between conversations:
+# Watches the change stream on agent.pg.accounts.cdc and turns notable account
+# events into observation memories, so the Memory Concierge remembers what
+# happened to the customer between conversations:
 #   - overdraft      : before.balance >= 0 and after.balance < 0
 #   - large deposit  : after.balance - before.balance >= 5000
-# Everything else (inserts, deletes, resolved markers, other updates) is dropped.
+# Everything else (other updates, malformed events) is dropped.
 #
-# Contract: docs/DESIGN.md section 6. Written for Redpanda Connect 4.69.
+# Contract: docs/PORT-CONTRACT.md section 6. Written for Redpanda Connect 4.69+.
 #   lint : rpk connect lint --skip-env-var-check connect/account-observer.yaml
 #   test : rpk connect test connect/tests/account-observer_test.yaml
 #
@@ -26,25 +26,28 @@ input:
       enabled: true
     sasl:
       - mechanism: SCRAM-SHA-256
-        username: "${secrets.AGENT_MEMORY_KAFKA_USER}"
-        password: "${secrets.AGENT_MEMORY_KAFKA_PASSWORD}"
-    topics: [ "agent.accounts.cdc" ]
-    consumer_group: agent-memory-observer
+        username: "${secrets.AGENT_MEMORY_PG_KAFKA_USER}"
+        password: "${secrets.AGENT_MEMORY_PG_KAFKA_PASSWORD}"
+    topics: [ "agent.pg.accounts.cdc" ]
+    consumer_group: agent-memory-pg-observer
     start_offset: earliest
     commit_period: 1s
 
 pipeline:
   processors:
-    # One changefeed envelope in, one observation row out (or nothing).
-    # The envelope (verified) is {"after": {...}|null, "before": {...}|null,
-    # "updated": "<hlc>"}; resolved markers are {"resolved": "<hlc>"}.
+    # One change envelope in, one observation row out (or nothing). The
+    # envelope (connect/pg-cdc.yaml) is {"change_id", "table", "op", "row_key",
+    # "subject", "before": {...}|null, "after": {...}|null, "changed_at"}; the
+    # account documents carry account_id, owner_email, nickname, account_type,
+    # balance, currency, overdraft_limit, status and updated_at (never the
+    # account number).
     - label: observation_row
       mapping: |
         # Only UPDATE events (before and after both present) can be observations.
-        let is_update = !this.exists("resolved") && this.before.type() == "object" && this.after.type() == "object"
+        let is_update = this.op == "update" && this.before.type() == "object" && this.after.type() == "object"
 
-        # DECIMAL columns arrive as JSON strings ("2450.00") or numbers depending
-        # on the CockroachDB version: normalise with number().
+        # NUMERIC columns arrive as JSON numbers from jsonb_build_object, but
+        # accept strings too: normalise with number().
         let before_balance = if $is_update { this.before.balance.number() } else { 0 }
         let after_balance  = if $is_update { this.after.balance.number() } else { 0 }
         let delta = $after_balance - $before_balance
@@ -55,7 +58,8 @@ pipeline:
         # Content is one third-person sentence with no PII beyond the nickname.
         let nickname = this.after.nickname.or("unknown")
         let currency = this.after.currency.or("USD")
-        # The date comes from after.updated_at (RFC3339 from the changefeed). It is
+        let subject  = this.subject.or(this.after.owner_email)
+        # The date comes from after.updated_at (RFC3339 from the trigger). It is
         # bound to a variable first because inside catch() the context is the error,
         # not the message root, so a fallback spelled this.after... would read null.
         let ts = this.after.updated_at
@@ -63,22 +67,22 @@ pipeline:
           $ts.ts_format("2006-01-02", "UTC").catch($ts.string().slice(0, 10))
         } else { "" }
         let movement = "balance moved from %s to %s".format("%.2f".format($before_balance), "%.2f".format($after_balance))
-
-        root = if $overdraft {
-          {
-            "rule": "overdraft",
-            "account_id": this.after.account_id,
-            "subject": this.after.owner_email,
-            "content": "Account '%s' went overdrawn on %s: %s %s.".format($nickname, $day, $movement, $currency),
-            "source_ref": "accounts/%v@%s".format(this.after.account_id, this.updated.string())
-          }
+        let content = if $overdraft {
+          "Account '%s' went overdrawn on %s: %s %s.".format($nickname, $day, $movement, $currency)
         } else if $large_deposit {
+          "Account '%s' received a large deposit of %s %s on %s: %s.".format($nickname, "%.2f".format($delta), $currency, $day, $movement)
+        } else { "" }
+
+        root = if $overdraft || $large_deposit {
           {
-            "rule": "large_deposit",
+            "rule": if $overdraft { "overdraft" } else { "large_deposit" },
             "account_id": this.after.account_id,
-            "subject": this.after.owner_email,
-            "content": "Account '%s' received a large deposit of %s %s on %s: %s.".format($nickname, "%.2f".format($delta), $currency, $day, $movement),
-            "source_ref": "accounts/%v@%s".format(this.after.account_id, this.updated.string())
+            "subject": $subject,
+            "content": $content,
+            # change_id makes the reference unique per event.
+            "source_ref": "accounts/%v@%v".format(this.after.account_id, this.change_id),
+            # Same formula as the agent's INSERT: md5(lower(subject) || '|' || lower(content)).
+            "content_hash": ($subject.lowercase() + "|" + $content.lowercase()).hash("md5").encode("hex")
           }
         } else {
           deleted()
@@ -87,25 +91,25 @@ pipeline:
     - catch:
         - log:
             level: ERROR
-            message: 'agent-memory-observer: dropping malformed changefeed event: ${! error() }'
+            message: 'pg-agent-memory-observer: dropping malformed change event: ${! error() }'
         - mapping: root = deleted()
     # Only surviving observations reach this point (no PII in the log line).
     - log:
         level: INFO
-        message: 'agent-memory-observer: ${! this.rule } on account ${! this.account_id } -> observation memory'
+        message: 'pg-agent-memory-observer: ${! this.rule } on account ${! this.account_id } -> observation memory'
 
 output:
   sql_raw:
     driver: postgres
-    dsn: "${secrets.AGENT_MEMORY_CRDB_DSN}"
+    dsn: "${secrets.AGENT_MEMORY_PG_DSN}"
     query: >-
-      INSERT INTO memories (subject, kind, content, importance, source, source_ref, expires_at)
-      VALUES ($1,'observation',$2,4,'event-stream',$3, now() + INTERVAL '30 days')
+      INSERT INTO agent_memory.memories (subject, kind, content, importance, source, source_ref, content_hash, expires_at)
+      VALUES ($1,'observation',$2,4,'event-stream',$3,$4, now() + INTERVAL '30 days')
       ON CONFLICT (subject, content_hash) DO NOTHING
     # The row object is produced (and unit tested) by the observation_row
     # processor above; this mapping only reads its fields in placeholder order.
     args_mapping: |
-      root = [ this.subject, this.content, this.source_ref ]
+      root = [ this.subject, this.content, this.source_ref, this.content_hash ]
     max_in_flight: 2
     batching:
       count: 100

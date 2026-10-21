@@ -1,3 +1,10 @@
+> **Pre-port plan, superseded.** This plan was written before the port touched a server and assumed PostgreSQL
+> logical replication (`wal_level = logical`, a publication and slot, the Redpanda Connect `postgres_cdc` input,
+> `REPLICA IDENTITY FULL`) and least-privilege roles (`agent_rw`, `cdc_repl`, `memory_purge`). The target server
+> (GantrySQL) has `wal_level = replica` and no `CREATE ROLE`, so none of that applies; the port that was actually
+> built and verified is described by `docs/PORT-CONTRACT.md`. Keep this file for the day the demo runs against a
+> server that does allow logical replication.
+
 # Porting the code to PostgreSQL
 
 What changes in this repository to run the Memory Concierge against PostgreSQL instead of CockroachDB Cloud. The documentation in this fork already tells the PostgreSQL story; the code does not. This is the plan for the code.

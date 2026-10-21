@@ -366,7 +366,7 @@ tr:last-child td { border-bottom: 0; }
       <span class="chip chip-rp">Redpanda Cloud</span>
       <span class="chip chip-adp">Redpanda Agentic Data Plane</span>
       <span class="chip chip-db">PostgreSQL</span>
-      <span>SaaS to SaaS; the CockroachDB original was built and verified live, October 2026.</span>
+      <span>Ported from the CockroachDB original; schema, triggers and pipelines verified live on a PostgreSQL-compatible server, October 2026.</span>
     </div>
   </div>
   <footer class="foot">
@@ -388,7 +388,7 @@ tr:last-child td { border-bottom: 0; }
       <ul>
         <li><strong>Where the operational data already lives:</strong> system of record and agent memory in one transactional database</li>
         <li><strong>JSONB and full-text search</strong> built in, pgvector optional for semantic recall</li>
-        <li><strong>Logical replication</strong> is the change feed; Redpanda Connect <code>postgres_cdc</code> turns it into topic events</li>
+        <li><strong>Triggers into a change log</strong> are the change feed; a Redpanda Connect pipeline polls it into topic events</li>
         <li><strong>Managed high availability:</strong> Multi-AZ failover, read replicas, point-in-time recovery</li>
       </ul>
     </div>
@@ -407,7 +407,7 @@ tr:last-child td { border-bottom: 0; }
       <ul>
         <li><strong>Identity and Cedar policy</strong> on every call</li>
         <li><strong>Guardrail and data policy</strong> act before the model sees anything</li>
-        <li><strong>MCP blocklist and database grants</strong> with no DELETE</li>
+        <li><strong>MCP blocklist</strong> with no DELETE and no writes to the system of record</li>
         <li><strong>Transcripts</strong> and an audit log</li>
       </ul>
     </div>
@@ -426,7 +426,7 @@ tr:last-child td { border-bottom: 0; }
   </div>
   <div class="diagram">
     <svg class="dg" viewBox="0 0 1240 345" role="img" aria-labelledby="dg-title">
-      <title id="dg-title">Customer via A2A to the ADP managed agent, to the managed SQL MCP server, to PostgreSQL. A Redpanda Connect postgres_cdc pipeline reads logical replication changes into Redpanda Cloud topics; two more Redpanda Connect pipelines write memory_audit rows and observation memories back into PostgreSQL.</title>
+      <title id="dg-title">Customer via A2A to the ADP managed agent, to the managed SQL MCP server, to PostgreSQL. Triggers append every change to a change_log table; a Redpanda Connect pipeline polls it into Redpanda Cloud topics; two more Redpanda Connect pipelines write memory_audit rows and observation memories back into PostgreSQL.</title>
       <defs>
         <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path class="ah" d="M0 0 L10 5 L0 10 Z"/></marker>
         <marker id="ah-db" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path class="ah-db" d="M0 0 L10 5 L0 10 Z"/></marker>
@@ -436,8 +436,8 @@ tr:last-child td { border-bottom: 0; }
       <!-- arrow labels -->
       <text class="tag" x="138" y="28" text-anchor="middle">A2A</text>
       <text class="tag" x="364" y="28" text-anchor="middle">TOOL CALL</text>
-      <text class="tag" x="550" y="28" text-anchor="middle">SQL AS AGENT ROLE</text>
-      <text class="tag" x="806" y="28" text-anchor="middle">LOGICAL REPLICATION</text>
+      <text class="tag" x="550" y="28" text-anchor="middle">GUARDED SQL</text>
+      <text class="tag" x="806" y="28" text-anchor="middle">TRIGGER + CHANGE LOG</text>
       <text class="tag" x="1022" y="28" text-anchor="middle">JSON EVENTS</text>
 
       <!-- Customer -->
@@ -465,30 +465,30 @@ tr:last-child td { border-bottom: 0; }
       <text class="m" x="584" y="109">customers · accounts</text>
       <text class="m" x="584" y="126">transactions</text>
       <text class="tag" x="584" y="152">MEMORY</text>
-      <text class="m" x="584" y="169">memories · scheduled purge</text>
+      <text class="m" x="584" y="169">memories · change_log</text>
       <text class="tag" x="584" y="196">HISTORY</text>
       <text class="m" x="584" y="213">memory_audit · append-only</text>
 
       <!-- CDC pipeline -->
       <rect class="box box-rp" x="824.5" y="40.5" width="180" height="130" rx="8"/>
       <text class="tag" x="914" y="64" text-anchor="middle">REDPANDA CONNECT</text>
-      <text class="mb" x="914" y="94" text-anchor="middle">postgres_cdc</text>
-      <text class="m" x="914" y="116" text-anchor="middle">managed pipeline</text>
-      <text class="m" x="914" y="134" text-anchor="middle">on memories</text>
-      <text class="m" x="914" y="152" text-anchor="middle">on accounts</text>
+      <text class="mb" x="914" y="94" text-anchor="middle">pg-agent-memory-cdc</text>
+      <text class="m" x="914" y="116" text-anchor="middle">polls change_log</text>
+      <text class="m" x="914" y="134" text-anchor="middle">every second</text>
+      <text class="m" x="914" y="152" text-anchor="middle">claim · publish · mark</text>
 
       <!-- Redpanda -->
       <rect class="box box-rp" x="1040.5" y="40.5" width="199" height="240" rx="8"/>
       <text class="t t-rp" x="1140" y="68" text-anchor="middle">Redpanda Cloud</text>
       <rect class="sub" x="1048.5" y="80.5" width="183" height="70" rx="6"/>
       <text class="tag" x="1056" y="98">TOPICS</text>
-      <text class="m" x="1056" y="117">agent.memory.cdc</text>
-      <text class="m" x="1056" y="134">agent.accounts.cdc</text>
+      <text class="m" x="1056" y="117">agent.pg.memory.cdc</text>
+      <text class="m" x="1056" y="134">agent.pg.accounts.cdc</text>
       <path class="arrow arrow-rp" d="M1140 151 V175"/>
       <rect class="sub" x="1048.5" y="178.5" width="183" height="90" rx="6"/>
       <text class="tag" x="1056" y="196">CONNECT PIPELINES</text>
-      <text class="m" x="1056" y="215">agent-memory-audit</text>
-      <text class="m" x="1056" y="232">agent-memory-observer</text>
+      <text class="m" x="1056" y="215">pg-agent-memory-audit</text>
+      <text class="m" x="1056" y="232">-observer · -purge</text>
       <text class="s" x="1056" y="254">Bloblang rules, no model</text>
 
       <!-- row arrows -->
@@ -523,7 +523,7 @@ tr:last-child td { border-bottom: 0; }
       </thead>
       <tbody>
         <tr><td class="beat">1</td><td class="name">Cold start</td><td class="num">2</td><td class="sees">No memory yet; three accounts, identifiers <strong>masked by policy</strong>.</td></tr>
-        <tr><td class="beat">2</td><td class="name">Remember</td><td class="num">2.5</td><td class="sees">Two memories stored; <strong><code>postgres_cdc</code> events and audit rows</strong> within seconds.</td></tr>
+        <tr><td class="beat">2</td><td class="name">Remember</td><td class="num">2.5</td><td class="sees">Two memories stored; <strong>change events and audit rows</strong> within seconds.</td></tr>
         <tr><td class="beat">3</td><td class="name">Recall</td><td class="num">1.5</td><td class="sees">A new conversation <strong>recalls the goal and the preference</strong>.</td></tr>
         <tr><td class="beat">4</td><td class="name">Event-driven memory</td><td class="num">3</td><td class="sees">An overdraft becomes an observation memory; <strong>the agent mentions it unprompted</strong>.</td></tr>
         <tr><td class="beat">5</td><td class="name">Governance</td><td class="num">3</td><td class="sees">Destructive SQL and investment advice <strong>blocked by the guardrail before the model sees them</strong>; audit log says Denied.</td></tr>
@@ -548,7 +548,7 @@ tr:last-child td { border-bottom: 0; }
       <p class="label">Use it</p>
       <ul>
         <li><strong>Repo:</strong> <a href="https://github.com/meticulo3366/redpanda-agent-postgres-demo">github.com/meticulo3366/redpanda-agent-postgres-demo</a></li>
-        <li><strong><code>make up</code></strong> still deploys to CockroachDB Cloud; <code>docs/POSTGRES-PORT.md</code> lists what a port to your managed Postgres changes. The ADP side is pinned to the <code>adp-production</code> environment and its two demo LLM providers today. Prerequisites are in the README.</li>
+        <li><strong><code>make up</code></strong> deploys everything: schema and triggers in your PostgreSQL, the four Connect pipelines, the MCP server and the agent. Any PostgreSQL 14+ over TLS works; no logical replication needed. The ADP side is pinned to the <code>adp-production</code> environment and its two demo LLM providers today. Prerequisites are in the README.</li>
         <li><strong>The talk track</strong> is <code>docs/DEMO-SCRIPT.md</code>.</li>
         <li><strong>Sharpen per prospect:</strong> fraud signals as observations, case memory, retention per memory kind.</li>
       </ul>
@@ -558,19 +558,20 @@ tr:last-child td { border-bottom: 0; }
       <ul>
         <li><strong>Secrets used by managed MCP servers need the AI Gateway scope</strong> as well as the MCP server scope.</li>
         <li><strong>In the current gateway build a Bedrock guardrail fires only on <code>invoke</code>, not on the agent's <code>converse-stream</code> path</strong> (observed 15 Oct 2026, may change), so the agent runs on the Anthropic provider, where the gateway evaluates the guardrail on every input and output.</li>
+        <li><strong>Not every PostgreSQL is PostgreSQL:</strong> the target server had no logical decoding and no <code>CREATE ROLE</code>, so change capture is a trigger-fed change log polled by Connect, and the MCP blocklist is the write boundary.</li>
       </ul>
     </div>
   </div>
   <div class="asks">
     <p class="label">Asks</p>
     <ul>
-      <li>A managed Postgres sandbox with logical replication enabled</li>
+      <li>A managed Postgres sandbox with <code>CREATE ROLE</code>, to put least-privilege roles back</li>
       <li>A webinar or blog post</li>
       <li>Feedback from the first three prospect showings</li>
     </ul>
     <p class="contact"><span>Contact</span> Zeke Dean, Redpanda</p>
   </div>
-  <p class="notice">Documentation fork: scripts still target CockroachDB; port plan in the repo.</p>
+  <p class="notice">Schema, triggers and pipelines verified live on GantrySQL (PostgreSQL 18 compatible), pipelines run locally; the ADP deploy is next. Triggers and a polling pipeline instead of logical replication; one database user.</p>
   <footer class="foot">
     <a href="https://github.com/meticulo3366/redpanda-agent-postgres-demo">github.com/meticulo3366/redpanda-agent-postgres-demo</a>
     <span class="n">5 / 5</span>

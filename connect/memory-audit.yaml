@@ -1,10 +1,10 @@
-# agent-memory-audit
+# pg-agent-memory-audit
 #
-# Materialises the CockroachDB changefeed on agent.memory.cdc into the
-# append-only memory_audit table, so every memory write (insert, update,
-# TTL delete) made by the Memory Concierge is kept as an immutable record.
+# Materialises the change stream on agent.pg.memory.cdc into the append-only
+# agent_memory.memory_audit table, so every memory write (insert, update, purge
+# delete) made by the Memory Concierge is kept as an immutable record.
 #
-# Contract: docs/DESIGN.md section 6. Written for Redpanda Connect 4.69.
+# Contract: docs/PORT-CONTRACT.md section 6. Written for Redpanda Connect 4.69+.
 #   lint : rpk connect lint --skip-env-var-check connect/memory-audit.yaml
 #   test : rpk connect test connect/tests/memory-audit_test.yaml
 #
@@ -23,60 +23,56 @@ input:
       enabled: true
     sasl:
       - mechanism: SCRAM-SHA-256
-        username: "${secrets.AGENT_MEMORY_KAFKA_USER}"
-        password: "${secrets.AGENT_MEMORY_KAFKA_PASSWORD}"
-    topics: [ "agent.memory.cdc" ]
-    consumer_group: agent-memory-audit
+        username: "${secrets.AGENT_MEMORY_PG_KAFKA_USER}"
+        password: "${secrets.AGENT_MEMORY_PG_KAFKA_PASSWORD}"
+    topics: [ "agent.pg.memory.cdc" ]
+    consumer_group: agent-memory-pg-audit
     start_offset: earliest
     commit_period: 1s
 
 pipeline:
   processors:
-    # One changefeed envelope in, one memory_audit row out (or nothing).
-    # The envelope (verified) is {"after": {...}|null, "before": {...}|null,
-    # "updated": "<hlc>"}; resolved markers are {"resolved": "<hlc>"}.
+    # One change envelope in, one memory_audit row out (or nothing). The
+    # envelope (connect/pg-cdc.yaml) is {"change_id", "table", "op", "row_key",
+    # "subject", "before": {...}|null, "after": {...}|null, "changed_at"}.
     - label: audit_row
       mapping: |
-        # Resolved markers carry no row change: drop them. Anything without an
-        # "updated" MVCC timestamp is not a row change either.
-        root = if this.exists("resolved") || !this.exists("updated") {
+        # Anything that is not a change envelope is dropped.
+        root = if !this.exists("change_id") || !this.exists("op") || !this.exists("row_key") {
           deleted()
         } else {
           {
-            # memory_id is the Kafka message key: the primary key as a JSON
-            # array, ["<uuid>"]. Fall back to the row if the key is missing or
-            # unparseable (or() covers both a null result and an error).
-            "memory_id": metadata("kafka_key").parse_json().index(0).or(
-              this.after.memory_id.or(this.before.memory_id)
-            ),
-            # subject from after, else before (deletes only have before).
-            "subject": this.after.subject.or(this.before.subject),
-            "op": if this.before == null { "insert" } else if this.after == null { "delete" } else { "update" },
-            # JSONB columns: pass the documents as JSON text ($4::jsonb, $5::jsonb).
+            # change_id is the idempotency key (UNIQUE in memory_audit).
+            "change_id": this.change_id,
+            "memory_id": this.row_key,
+            # subject from the envelope, else after, else before (deletes only have before).
+            "subject": this.subject.or(this.after.subject.or(this.before.subject)),
+            "op": this.op,
+            # JSONB columns: pass the documents as JSON text ($5::jsonb, $6::jsonb).
             "before_doc": if this.before != null { this.before.string() } else { null },
             "after_doc": if this.after != null { this.after.string() } else { null },
-            "updated_hlc": this.updated.string()
+            "changed_at": this.changed_at
           }
         }
     # A malformed event must never poison a batch: log it and drop it.
     - catch:
         - log:
             level: ERROR
-            message: 'agent-memory-audit: dropping malformed changefeed event: ${! error() }'
+            message: 'pg-agent-memory-audit: dropping malformed change event: ${! error() }'
         - mapping: root = deleted()
 
 output:
   sql_raw:
     driver: postgres
-    dsn: "${secrets.AGENT_MEMORY_CRDB_DSN}"
+    dsn: "${secrets.AGENT_MEMORY_PG_DSN}"
     query: >-
-      INSERT INTO memory_audit (memory_id, subject, op, before_doc, after_doc, updated_hlc)
-      VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6)
-      ON CONFLICT (memory_id, updated_hlc) DO NOTHING
+      INSERT INTO agent_memory.memory_audit (change_id, memory_id, subject, op, before_doc, after_doc, changed_at)
+      VALUES ($1::bigint,$2::bigint,$3,$4,$5::jsonb,$6::jsonb,$7::timestamptz)
+      ON CONFLICT (change_id) DO NOTHING
     # The row object is produced (and unit tested) by the audit_row processor
-    # above; this mapping only reads its fields in column order.
+    # above; this mapping only reads its fields in placeholder order.
     args_mapping: |
-      root = [ this.memory_id, this.subject, this.op, this.before_doc, this.after_doc, this.updated_hlc ]
+      root = [ this.change_id, this.memory_id, this.subject, this.op, this.before_doc, this.after_doc, this.changed_at ]
     max_in_flight: 2
     batching:
       count: 100

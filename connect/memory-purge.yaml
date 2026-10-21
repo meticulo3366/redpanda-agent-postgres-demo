@@ -1,0 +1,40 @@
+# pg-agent-memory-purge
+#
+# The retention job. CockroachDB forgot by row-level TTL; PostgreSQL has no
+# built-in TTL and this server has no pg_cron, so once an hour this pipeline
+# deletes every memory whose expires_at has passed. "Forget" in the agent is an
+# UPDATE of expires_at, never a DELETE, and this purge is the only thing that
+# deletes memories: the trigger logs each delete, so the purge shows up in
+# agent_memory.memory_audit like any other change.
+#
+# Contract: docs/PORT-CONTRACT.md section 6. Written for Redpanda Connect 4.69+.
+#   lint : rpk connect lint --skip-env-var-check connect/memory-purge.yaml
+# (secrets as in memory-audit.yaml; the linter interpolates "dollar-brace" even
+# inside comments, so comments here never spell that syntax out.)
+
+input:
+  generate:
+    interval: 1h
+    mapping: root = {}
+
+pipeline:
+  processors:
+    - sql_raw:
+        driver: postgres
+        dsn: "${secrets.AGENT_MEMORY_PG_DSN}"
+        query: DELETE FROM agent_memory.memories WHERE expires_at < now()
+        exec_only: true
+    - log:
+        level: INFO
+        message: 'pg-agent-memory-purge: expired memories deleted (each delete is in the change stream)'
+
+output:
+  drop: {}
+
+# Service-wide fields (stripped by scripts/40-pipelines.sh --local, where they
+# move into the streams-mode root config).
+metrics:
+  prometheus: {}
+
+logger:
+  level: INFO

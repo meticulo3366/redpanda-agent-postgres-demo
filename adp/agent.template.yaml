@@ -3,19 +3,19 @@
 # replaces the __SYSTEM_PROMPT__ line with adp/system-prompt.md indented by six
 # spaces, writes adp/agent.yaml, then runs: rpk ai agent apply -f adp/agent.yaml
 '@type': type.googleapis.com/redpanda.api.adp.v1alpha1.Agent
-name: memory-concierge
-display_name: Memory Concierge
-description: Bank concierge whose long-term memory lives in CockroachDB Cloud and is audited through Redpanda.
+name: memory-concierge-pg
+display_name: Memory Concierge (PostgreSQL)
+description: Bank concierge whose long-term memory lives in PostgreSQL (GantrySQL) and is audited through Redpanda.
 tags:
-  demo: agent-memory
+  demo: agent-memory-pg
   owner: zeke.dean
-  stack: cockroachdb-redpanda
+  stack: postgresql-redpanda
 managed:
   spec:
     llm_provider: __LLM_PROVIDER__
     model: __LLM_MODEL__
     max_iterations: 16
     mcp_servers:
-      - crdb-agent-memory
+      - pg-agent-memory
     system_prompt: |
       __SYSTEM_PROMPT__

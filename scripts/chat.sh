@@ -24,7 +24,7 @@ source "$(dirname "$0")/lib.sh"
 load_env
 require_cmd rpk
 
-AGENT_NAME="${AGENT_NAME:-memory-concierge}"
+AGENT_NAME="${AGENT_NAME:-memory-concierge-pg}"
 CTX_FILE="$STATE_DIR/chat-context"
 
 usage() {

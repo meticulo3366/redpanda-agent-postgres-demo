@@ -1,5 +1,5 @@
 permit(
-  principal == Agent::"memory-concierge",
+  principal == Agent::"memory-concierge-pg",
   action == Action::"LLMProvider.invoke",
   resource
 ) when {

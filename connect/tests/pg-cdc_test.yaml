@@ -1,0 +1,163 @@
+# Unit tests for connect/pg-cdc.yaml (rpk connect test connect/tests/pg-cdc_test.yaml)
+#
+# The claiming poll (sql_raw, processor 0) is mocked with the JSON array the postgres
+# driver returns for agent_memory.change_log: jsonb columns as JSON text (or as
+# parsed objects on some driver versions), timestamps as RFC3339 text, bigints
+# as numbers. Expected outputs are the exact envelopes published to the topics,
+# with the Kafka key in metadata.
+tests:
+  - name: a memory insert row becomes an envelope with a parsed after document and the row key as kafka_key
+    target_processors: '../pg-cdc.yaml#/pipeline/processors'
+    mocks:
+      /pipeline/processors/0:
+        mapping: |
+          root = [ {
+            "change_id": 41, "table_name": "memories", "op": "insert", "row_key": 12,
+            "subject": "zeke.dean@redpanda.com", "before_doc": null,
+            "after_doc": {"memory_id": 12, "subject": "zeke.dean@redpanda.com", "kind": "preference", "content": "Prefers short answers", "importance": 3, "source": "agent", "source_ref": "chat:2026-10-21", "created_at": "2026-10-21T16:05:12.178381+00:00", "updated_at": "2026-10-21T16:05:12.178381+00:00", "expires_at": "2027-01-19T16:05:12.178381+00:00"}.string(),
+            "changed_at": "2026-10-21T16:05:12.178381+00:00"
+          } ]
+    input_batch:
+      - content: '{}'
+    output_batches:
+      - - json_equals:
+            change_id: 41
+            table: memories
+            op: insert
+            row_key: 12
+            subject: zeke.dean@redpanda.com
+            before: null
+            after:
+              memory_id: 12
+              subject: zeke.dean@redpanda.com
+              kind: preference
+              content: Prefers short answers
+              importance: 3
+              source: agent
+              source_ref: "chat:2026-10-21"
+              created_at: "2026-10-21T16:05:12.178381+00:00"
+              updated_at: "2026-10-21T16:05:12.178381+00:00"
+              expires_at: "2027-01-19T16:05:12.178381+00:00"
+            changed_at: "2026-10-21T16:05:12.178381+00:00"
+          metadata_equals:
+            kafka_key: "12"
+
+  - name: an account update row keeps both documents (numbers stay numbers) and is keyed by account_id
+    target_processors: '../pg-cdc.yaml#/pipeline/processors'
+    mocks:
+      /pipeline/processors/0:
+        mapping: |
+          root = [ {
+            "change_id": 7, "table_name": "accounts", "op": "update", "row_key": 1001,
+            "subject": "zeke.dean@redpanda.com",
+            "before_doc": {"account_id": 1001, "owner_email": "zeke.dean@redpanda.com", "nickname": "Everyday Checking", "account_type": "checking", "balance": 2450.00, "currency": "USD", "overdraft_limit": 500.00, "status": "open", "updated_at": "2026-09-14T09:00:00+00:00"}.string(),
+            "after_doc": {"account_id": 1001, "owner_email": "zeke.dean@redpanda.com", "nickname": "Everyday Checking", "account_type": "checking", "balance": -450.00, "currency": "USD", "overdraft_limit": 500.00, "status": "open", "updated_at": "2026-10-15T15:11:58.412+00:00"}.string(),
+            "changed_at": "2026-10-15T15:11:58.412345+00:00"
+          } ]
+    input_batch:
+      - content: '{}'
+    output_batches:
+      - - json_equals:
+            change_id: 7
+            table: accounts
+            op: update
+            row_key: 1001
+            subject: zeke.dean@redpanda.com
+            before:
+              account_id: 1001
+              owner_email: zeke.dean@redpanda.com
+              nickname: Everyday Checking
+              account_type: checking
+              balance: 2450.00
+              currency: USD
+              overdraft_limit: 500.00
+              status: open
+              updated_at: "2026-09-14T09:00:00+00:00"
+            after:
+              account_id: 1001
+              owner_email: zeke.dean@redpanda.com
+              nickname: Everyday Checking
+              account_type: checking
+              balance: -450.00
+              currency: USD
+              overdraft_limit: 500.00
+              status: open
+              updated_at: "2026-10-15T15:11:58.412+00:00"
+            changed_at: "2026-10-15T15:11:58.412345+00:00"
+          metadata_equals:
+            kafka_key: "1001"
+
+  - name: documents already parsed by the driver pass through unchanged, and a delete has no after
+    target_processors: '../pg-cdc.yaml#/pipeline/processors'
+    mocks:
+      /pipeline/processors/0:
+        mapping: |
+          root = [ {
+            "change_id": 99, "table_name": "memories", "op": "delete", "row_key": 12,
+            "subject": "zeke.dean@redpanda.com",
+            "before_doc": {"memory_id": 12, "subject": "zeke.dean@redpanda.com", "kind": "preference", "content": "Prefers short answers", "importance": 3},
+            "after_doc": null,
+            "changed_at": "2026-10-21T17:00:00+00:00"
+          } ]
+    input_batch:
+      - content: '{}'
+    output_batches:
+      - - json_equals:
+            change_id: 99
+            table: memories
+            op: delete
+            row_key: 12
+            subject: zeke.dean@redpanda.com
+            before:
+              memory_id: 12
+              subject: zeke.dean@redpanda.com
+              kind: preference
+              content: Prefers short answers
+              importance: 3
+            after: null
+            changed_at: "2026-10-21T17:00:00+00:00"
+          metadata_equals:
+            kafka_key: "12"
+
+  - name: an empty poll produces no messages
+    target_processors: '../pg-cdc.yaml#/pipeline/processors'
+    mocks:
+      /pipeline/processors/0:
+        mapping: root = []
+    input_batch:
+      - content: '{}'
+    output_batches: []
+
+  - name: a poll with several rows yields one envelope per row, in change_id order
+    target_processors: '../pg-cdc.yaml#/pipeline/processors'
+    mocks:
+      /pipeline/processors/0:
+        mapping: |
+          root = [
+            {"change_id": 1, "table_name": "memories", "op": "insert", "row_key": 5, "subject": "a@example.com", "before_doc": null, "after_doc": {"memory_id": 5}.string(), "changed_at": "2026-10-21T10:00:00+00:00"},
+            {"change_id": 2, "table_name": "accounts", "op": "update", "row_key": 2001, "subject": "alice@example.com", "before_doc": {"account_id": 2001, "balance": 10}.string(), "after_doc": {"account_id": 2001, "balance": 20}.string(), "changed_at": "2026-10-21T10:00:01+00:00"},
+            {"change_id": 3, "table_name": "memories", "op": "update", "row_key": 5, "subject": "a@example.com", "before_doc": {"memory_id": 5, "importance": 3}.string(), "after_doc": {"memory_id": 5, "importance": 5}.string(), "changed_at": "2026-10-21T10:00:02+00:00"}
+          ]
+    input_batch:
+      - content: '{}'
+    output_batches:
+      - - json_equals: {change_id: 1, table: memories, op: insert, row_key: 5, subject: a@example.com, before: null, after: {memory_id: 5}, changed_at: "2026-10-21T10:00:00+00:00"}
+          metadata_equals: {kafka_key: "5"}
+        - json_equals: {change_id: 2, table: accounts, op: update, row_key: 2001, subject: alice@example.com, before: {account_id: 2001, balance: 10}, after: {account_id: 2001, balance: 20}, changed_at: "2026-10-21T10:00:01+00:00"}
+          metadata_equals: {kafka_key: "2001"}
+        - json_equals: {change_id: 3, table: memories, op: update, row_key: 5, subject: a@example.com, before: {memory_id: 5, importance: 3}, after: {memory_id: 5, importance: 5}, changed_at: "2026-10-21T10:00:02+00:00"}
+          metadata_equals: {kafka_key: "5"}
+
+  - name: a malformed row (not an object) is dropped, the others survive
+    target_processors: '../pg-cdc.yaml#/pipeline/processors'
+    mocks:
+      /pipeline/processors/0:
+        mapping: |
+          root = [
+            "this is not a change_log row",
+            {"change_id": 4, "table_name": "memories", "op": "insert", "row_key": 6, "subject": "a@example.com", "before_doc": null, "after_doc": {"memory_id": 6}.string(), "changed_at": "2026-10-21T10:00:03+00:00"}
+          ]
+    input_batch:
+      - content: '{}'
+    output_batches:
+      - - json_equals: {change_id: 4, table: memories, op: insert, row_key: 6, subject: a@example.com, before: null, after: {memory_id: 6}, changed_at: "2026-10-21T10:00:03+00:00"}

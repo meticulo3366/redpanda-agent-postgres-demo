@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# 60-verify.sh - end-to-end verification (docs/DESIGN.md section 8).
+# 60-verify.sh - end-to-end verification (docs/PORT-CONTRACT.md section 8).
 # Prints one PASS/FAIL line per check and exits non-zero when anything failed.
 #   SKIP_A2A=1 (or --skip-a2a)  skip the checks that talk to the agent (LLM calls, 1-3 min)
+#   SKIP_STREAM=1               skip the change-stream probe (it needs pg-agent-memory-cdc and -audit running)
 #   VERIFY_GUARDRAIL=1          also send a denied-topic message and expect guardrail_intervened
 #   VERIFY_KEEP_MEMORY=1        keep the memory written by the round-trip instead of expiring it
 set -euo pipefail
@@ -11,10 +12,12 @@ load_env
 require_cmd rpk psql jq curl
 
 SKIP_A2A="${SKIP_A2A:-0}"
+SKIP_STREAM="${SKIP_STREAM:-0}"
 for a in "$@"; do
   case "$a" in
     --skip-a2a) SKIP_A2A=1 ;;
-    -h|--help) sed -n '2,6p' "$0"; exit 0 ;;
+    --skip-stream) SKIP_STREAM=1 ;;
+    -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
     *) die "unknown argument: $a" ;;
   esac
 done
@@ -25,11 +28,10 @@ pass() { PASS_COUNT=$((PASS_COUNT + 1)); printf 'PASS  %s\n' "$*"; }
 fail() { FAIL_COUNT=$((FAIL_COUNT + 1)); printf 'FAIL  %s\n' "$*"; }
 skip() { printf 'SKIP  %s\n' "$*"; }
 
-# psql on this machine has no ~/.postgresql/root.crt, so use sslmode=require locally.
-AGENT_PSQL_URL="$(crdb_agent_url)"
-AGENT_PSQL_URL="${AGENT_PSQL_URL/sslmode=verify-full/sslmode=require}"
+S="$PG_SCHEMA"
+AGENT_PSQL_URL="$(pg_agent_url)"
 agent_psql() { psql "$AGENT_PSQL_URL" -v ON_ERROR_STOP=1 -X -q -At -c "$1"; }
-sql_scalar()  { crdb_admin_psql "$1" -At 2>/dev/null; }
+sql_scalar()  { pg_admin_psql "$1" -At 2>/dev/null; }
 
 A2A_ERR="$(mktemp)"
 ADP_ERR="$(mktemp)"
@@ -52,44 +54,64 @@ adp_get() {
 adp_reason() { tr -s '[:space:]' ' ' <"$ADP_ERR" | head -c 200; }
 
 # ---------------------------------------------------------------------------
-info "CockroachDB"
+info "PostgreSQL ($PG_HOST, database $PG_DATABASE, schema $S)"
 
-if n="$(sql_scalar "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('customers','accounts','transactions','memories','memory_audit')")"; then
-  if [[ "$n" == "5" ]]; then
-    pass "tables exist: customers, accounts, transactions, memories, memory_audit"
+if n="$(sql_scalar "SELECT count(*) FROM information_schema.tables WHERE table_schema = '$S' AND table_name IN ('customers','accounts','transactions','memories','memory_audit','change_log')")"; then
+  if [[ "$n" == "6" ]]; then
+    pass "tables exist: customers, accounts, transactions, memories, memory_audit, change_log"
   else
-    fail "only $n of 5 demo tables exist in $CRDB_DATABASE.public (run make setup-db)"
+    fail "only $n of 6 demo tables exist in $PG_DATABASE.$S (run make setup-db)"
   fi
 else
-  fail "cannot query CockroachDB as admin (run make preflight)"
+  fail "cannot query PostgreSQL as admin (run make preflight)"
 fi
 
+n="$(sql_scalar "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgname IN ('tr_memories_log','tr_accounts_log')" || echo 0)"
+if [[ "$n" == "2" ]]; then
+  pass "change-capture triggers exist: tr_memories_log, tr_accounts_log"
+else
+  fail "expected 2 change-capture triggers, found ${n:-0} (run make setup-db)"
+fi
+
+idx="$(sql_scalar "SELECT indexdef FROM pg_indexes WHERE schemaname = '$S' AND indexname = 'idx_memories_search'" || true)"
+if [[ "$idx" == *"USING fts"* ]]; then
+  pass "full-text index idx_memories_search uses the GantrySQL fts access method"
+elif [[ -n "$idx" ]]; then
+  pass "full-text index idx_memories_search exists (${idx#*USING })"
+else
+  fail "full-text index idx_memories_search is missing (run make setup-db)"
+fi
+
+admin_user="$(sql_scalar "SELECT current_user" || true)"
 if out="$(agent_psql "SELECT current_user" 2>&1)"; then
-  pass "role $CRDB_AGENT_USER can connect (current_user=$out)"
+  pass "agent user $PG_AGENT_USER can connect with the DSN the MCP server and pipelines use (current_user=$out)"
 else
-  fail "role $CRDB_AGENT_USER cannot connect: ${out:0:200}"
+  fail "agent user $PG_AGENT_USER cannot connect: ${out:0:200}"
 fi
 
-if out="$(agent_psql "DELETE FROM memories WHERE 1 = 0" 2>&1)"; then
-  fail "role $CRDB_AGENT_USER is allowed to DELETE FROM memories (must be denied)"
-elif grep -qiE 'permission denied|privilege|not authorized|denied' <<<"$out"; then
-  pass "role $CRDB_AGENT_USER is denied DELETE on memories"
+if [[ -n "$admin_user" && "$admin_user" == "$PG_AGENT_USER" ]]; then
+  skip "database-level privilege checks: $PG_AGENT_USER is the admin user (this server has no CREATE ROLE); the MCP server's blocked patterns are checked below"
 else
-  fail "DELETE as $CRDB_AGENT_USER failed for an unexpected reason: ${out:0:200}"
-fi
-
-if out="$(agent_psql "UPDATE accounts SET balance = balance WHERE 1 = 0" 2>&1)"; then
-  fail "role $CRDB_AGENT_USER is allowed to UPDATE accounts (must be read-only)"
-elif grep -qiE 'permission denied|privilege|not authorized|denied' <<<"$out"; then
-  pass "role $CRDB_AGENT_USER is denied UPDATE on accounts"
-else
-  fail "UPDATE accounts as $CRDB_AGENT_USER failed for an unexpected reason: ${out:0:200}"
+  if out="$(agent_psql "DELETE FROM $S.memories WHERE 1 = 0" 2>&1)"; then
+    fail "role $PG_AGENT_USER is allowed to DELETE FROM memories (must be denied)"
+  elif grep -qiE 'permission denied|privilege|not authorized|denied' <<<"$out"; then
+    pass "role $PG_AGENT_USER is denied DELETE on memories"
+  else
+    fail "DELETE as $PG_AGENT_USER failed for an unexpected reason: ${out:0:200}"
+  fi
+  if out="$(agent_psql "UPDATE $S.accounts SET balance = balance WHERE 1 = 0" 2>&1)"; then
+    fail "role $PG_AGENT_USER is allowed to UPDATE accounts (must be read-only)"
+  elif grep -qiE 'permission denied|privilege|not authorized|denied' <<<"$out"; then
+    pass "role $PG_AGENT_USER is denied UPDATE on accounts"
+  else
+    fail "UPDATE accounts as $PG_AGENT_USER failed for an unexpected reason: ${out:0:200}"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
 info "Redpanda Cloud"
 
-if out="$(rp_api GET "/v1/topics?filter.name_contains=agent.&page_size=100")"; then
+if out="$(rp_api GET "/v1/topics?filter.name_contains=agent.pg.&page_size=100")"; then
   for t in "$TOPIC_MEMORY_CDC" "$TOPIC_ACCOUNTS_CDC"; do
     if jq -e --arg n "$t" 'any(.topics[]?; .name == $n)' <<<"$out" >/dev/null; then
       pass "topic exists: $t"
@@ -102,20 +124,11 @@ else
 fi
 
 # GET /v1/secrets/{id} wraps the object: {"secret":{"id":...,"scopes":[...]}} (verified live).
-for s in AGENT_MEMORY_CRDB_DSN AGENT_MEMORY_KAFKA_USER AGENT_MEMORY_KAFKA_PASSWORD; do
+for s in AGENT_MEMORY_PG_DSN AGENT_MEMORY_PG_KAFKA_USER AGENT_MEMORY_PG_KAFKA_PASSWORD; do
   if out="$(RP_API_OK_CODES=404 rp_api GET "/v1/secrets/$s")" && jq -e --arg id "$s" '(.id // .secret.id) == $id' <<<"$out" >/dev/null 2>&1; then
     pass "secret exists: $s (scopes $(jq -r '(.scopes // .secret.scopes // []) | join(",")' <<<"$out"))"
   else
     fail "secret missing: $s (run make setup-redpanda)"
-  fi
-done
-
-for t in "$TOPIC_MEMORY_CDC" "$TOPIC_ACCOUNTS_CDC"; do
-  n="$(sql_scalar "SELECT count(*) FROM [SHOW CHANGEFEED JOBS] WHERE status = 'running' AND (description LIKE '%${t}%' OR sink_uri LIKE '%${t}%')" || echo "")"
-  if [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 1 )); then
-    pass "changefeed running for $t"
-  else
-    fail "no running changefeed for $t (run make changefeeds)"
   fi
 done
 
@@ -129,17 +142,75 @@ list_pipelines() {
     [[ -n "$token" ]] || break
   done
 }
+cdc_running=0
 if pipes="$(list_pipelines)"; then
-  for p in agent-memory-audit agent-memory-observer; do
+  for p in pg-agent-memory-cdc pg-agent-memory-audit pg-agent-memory-observer pg-agent-memory-purge; do
     state="$(jq -r --arg n "$p" 'select(.display_name == $n) | .state' <<<"$pipes" | head -1)"
     case "$state" in
-      STATE_RUNNING) pass "pipeline running: $p" ;;
+      STATE_RUNNING) pass "pipeline running: $p"; [[ "$p" == pg-agent-memory-cdc ]] && cdc_running=1 ;;
       "")            fail "pipeline missing: $p (run make pipelines)" ;;
       *)             fail "pipeline $p is in state $state" ;;
     esac
   done
 else
   fail "GET /v1/redpanda-connect/pipelines failed"
+fi
+
+# The poller keeps change_log drained: nothing older than 30s may still be unpublished.
+n="$(sql_scalar "SELECT count(*) FROM $S.change_log WHERE published_at IS NULL AND changed_at < now() - INTERVAL '30 seconds'" || echo "?")"
+if [[ "$n" == "0" ]]; then
+  pass "change_log has no unpublished change older than 30s"
+elif [[ "$n" =~ ^[0-9]+$ ]]; then
+  fail "change_log has $n unpublished change(s) older than 30s (is pipeline pg-agent-memory-cdc running and able to reach PostgreSQL and Redpanda?)"
+else
+  fail "could not count unpublished changes in change_log"
+fi
+
+# ---------------------------------------------------------------------------
+if (( SKIP_STREAM )); then
+  skip "change-stream probe (SKIP_STREAM=1)"
+else
+  info "Change-stream probe: INSERT -> trigger -> change_log -> cdc pipeline -> $TOPIC_MEMORY_CDC -> audit pipeline -> memory_audit"
+  probe_subject="verify@agent-memory.invalid"
+  probe_content="Verification probe $(date -u +%Y-%m-%dT%H:%M:%SZ) $RANDOM"
+  mid="$(pg_admin_psql "INSERT INTO $S.memories (subject, kind, content, importance, source, source_ref, content_hash, expires_at)
+    VALUES ('$probe_subject', 'fact', '$probe_content', 1, 'human', 'verify', md5(lower('$probe_subject') || '|' || lower('$probe_content')), now() + INTERVAL '1 hour')
+    RETURNING memory_id" -At 2>/dev/null || true)"
+  if [[ "$mid" =~ ^[0-9]+$ ]]; then
+    pass "probe memory inserted (memory_id $mid, subject $probe_subject)"
+    cid="$(sql_scalar "SELECT max(change_id) FROM $S.change_log WHERE table_name = 'memories' AND row_key = $mid AND op = 'insert'" || true)"
+    if [[ "$cid" =~ ^[0-9]+$ ]]; then
+      pass "trigger logged the insert as change $cid"
+      t0=$SECONDS; published=""
+      while (( SECONDS - t0 < 30 )); do
+        published="$(sql_scalar "SELECT published_at IS NOT NULL FROM $S.change_log WHERE change_id = $cid" || true)"
+        [[ "$published" == "t" ]] && break
+        sleep 2
+      done
+      if [[ "$published" == "t" ]]; then
+        pass "cdc pipeline published change $cid to Redpanda after $((SECONDS - t0))s"
+      else
+        fail "change $cid was not published within 30s (pipeline pg-agent-memory-cdc$( (( cdc_running )) || printf ' is not running'))"
+      fi
+      t0=$SECONDS; audited="0"
+      while (( SECONDS - t0 < 30 )); do
+        audited="$(sql_scalar "SELECT count(*) FROM $S.memory_audit WHERE change_id = $cid" || echo 0)"
+        [[ "$audited" == "1" ]] && break
+        sleep 2
+      done
+      if [[ "$audited" == "1" ]]; then
+        pass "audit pipeline wrote the memory_audit row for change $cid after $((SECONDS - t0))s"
+      else
+        fail "no memory_audit row for change $cid within 30s (pipeline pg-agent-memory-audit)"
+      fi
+    else
+      fail "no change_log row for the probe insert (trigger tr_memories_log; run make setup-db)"
+    fi
+    # The probe row is removed again; that delete is logged and audited like any other change.
+    pg_admin_psql "DELETE FROM $S.memories WHERE memory_id = $mid" >/dev/null 2>&1 || warn "could not delete the probe memory $mid"
+  else
+    fail "could not insert the probe memory as admin"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -158,6 +229,17 @@ if (( rc == 0 )); then
     pass "MCP server tools: $tools"
   else
     fail "MCP server tools are [${tools:-none}], expected query and execute"
+  fi
+  # No database role separates reads from writes on this server, so the MCP
+  # server's blocked patterns are the enforcement point: DELETE and the
+  # change_log table must be among them.
+  patterns="$(jq -r '[.. | objects | (.blocked_patterns? // .blockedPatterns? // empty) | .[]] | join("\n")' <<<"$mcp" 2>/dev/null || true)"
+  if [[ -z "$patterns" ]]; then
+    fail "MCP server $MCP_SERVER_NAME reports no blocked_patterns (adp/mcp-server.yaml)"
+  else
+    grep -qE 'DELETE' <<<"$patterns" && pass "MCP server blocks DELETE" || fail "MCP server blocked_patterns do not block DELETE"
+    grep -qE 'change_log' <<<"$patterns" && pass "MCP server blocks access to change_log" || fail "MCP server blocked_patterns do not block change_log"
+    grep -qE 'memory_audit' <<<"$patterns" && pass "MCP server blocks writes to memory_audit and the system of record" || fail "MCP server blocked_patterns do not block writes to memory_audit, accounts, customers, transactions"
   fi
 elif (( rc == 1 )); then
   fail "MCP server $MCP_SERVER_NAME not found (run make deploy-agent)"
@@ -303,11 +385,11 @@ else
     fail "store A2A call failed: $(head -c 300 "$A2A_ERR" | tr '\n' ' ')"
   fi
 
-  info "Waiting up to 60s for the audit row (changefeed -> Redpanda -> Connect -> memory_audit)"
+  info "Waiting up to 60s for the audit row (trigger -> cdc pipeline -> Redpanda -> audit pipeline -> memory_audit)"
   deadline=$((SECONDS + 60))
   found="0"
   while (( SECONDS < deadline )); do
-    found="$(sql_scalar "SELECT count(*) FROM memory_audit WHERE subject = '$DEMO_USER_EMAIL' AND coalesce(after_doc->>'content', '') ILIKE '%${token}%'" || echo 0)"
+    found="$(sql_scalar "SELECT count(*) FROM $S.memory_audit WHERE subject = '$DEMO_USER_EMAIL' AND coalesce(after_doc->>'content', '') ILIKE '%${token}%'" || echo 0)"
     if [[ "$found" =~ ^[0-9]+$ ]] && (( found >= 1 )); then
       break
     fi
@@ -316,16 +398,16 @@ else
   if [[ "$found" =~ ^[0-9]+$ ]] && (( found >= 1 )); then
     pass "audit row for the stored memory appeared in memory_audit"
   else
-    inmem="$(sql_scalar "SELECT count(*) FROM memories WHERE subject = '$DEMO_USER_EMAIL' AND content ILIKE '%${token}%'" || echo "?")"
+    inmem="$(sql_scalar "SELECT count(*) FROM $S.memories WHERE subject = '$DEMO_USER_EMAIL' AND content ILIKE '%${token}%'" || echo "?")"
     if [[ "$inmem" == "0" ]]; then
       fail "audit: the agent did not store the token in memories, so nothing was audited"
     else
-      fail "audit: memories has $inmem matching row(s) but memory_audit got none within 60s (check the changefeed and pipeline agent-memory-audit)"
+      fail "audit: memories has $inmem matching row(s) but memory_audit got none within 60s (check pipelines pg-agent-memory-cdc and pg-agent-memory-audit)"
     fi
   fi
 
   if [[ "${VERIFY_KEEP_MEMORY:-0}" != "1" ]]; then
-    if crdb_admin_psql "UPDATE memories SET expires_at = now(), updated_at = now() WHERE subject = '$DEMO_USER_EMAIL' AND content ILIKE '%${token}%'" >/dev/null 2>&1; then
+    if pg_admin_psql "UPDATE $S.memories SET expires_at = now(), updated_at = now() WHERE subject = '$DEMO_USER_EMAIL' AND content ILIKE '%${token}%'" >/dev/null 2>&1; then
       log "expired the verification memory (UPDATE, never DELETE); set VERIFY_KEEP_MEMORY=1 to keep it"
     fi
   fi

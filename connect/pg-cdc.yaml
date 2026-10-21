@@ -1,0 +1,157 @@
+# pg-agent-memory-cdc
+#
+# The change stream for the Memory Concierge on PostgreSQL. The target server
+# (GantrySQL, wal_level = replica) has no logical decoding, so the postgres_cdc
+# input cannot be used. Instead, AFTER triggers (postgres/02-triggers.sql)
+# append every memory insert/update/delete and every account update to
+# agent_memory.change_log, and this pipeline polls that table once a second:
+# claim the unpublished rows (a 30-second lease in claimed_at), publish each
+# one to Redpanda, then stamp published_at.
+#
+# Delivery is at-least-once: a failure between publish and mark re-publishes
+# the row once its lease expires. Both consumers are idempotent on change_id. The envelope on both topics, keyed by row_key, is
+#   {"change_id", "table", "op", "row_key", "subject", "before", "after", "changed_at"}
+# with before/after as the trigger's documents (null for insert/delete).
+#
+# Contract: docs/PORT-CONTRACT.md section 5. Written for Redpanda Connect 4.69+.
+#   lint : rpk connect lint --skip-env-var-check connect/pg-cdc.yaml
+#   test : rpk connect test connect/tests/pg-cdc_test.yaml
+#
+# In Redpanda Cloud, REDPANDA_BROKERS is a contextual variable and the
+# secrets.NAME interpolations resolve from the cluster secret store (scope
+# SCOPE_REDPANDA_CONNECT). scripts/40-pipelines.sh uploads this file verbatim;
+# with --local it renders a copy that reads plain environment variables
+# (secrets.NAME -> NAME) and moves metrics/logger into the streams-mode root
+# config. Note: the linter interpolates "dollar-brace" even inside comments,
+# so comments here never spell that syntax out.
+
+input:
+  generate:
+    interval: 1s
+    mapping: root = {}
+
+pipeline:
+  processors:
+    # One poll: claim every unpublished change (oldest first, at most 200) with
+    # a 30-second lease. FOR UPDATE SKIP LOCKED makes overlapping polls take
+    # disjoint rows, and a change whose publish failed is picked up again once
+    # the lease expires. The statement returns the claimed rows.
+    - sql_raw:
+        driver: postgres
+        dsn: "${secrets.AGENT_MEMORY_PG_DSN}"
+        query: >-
+          UPDATE agent_memory.change_log
+             SET claimed_at = now()
+           WHERE change_id IN (
+                 SELECT change_id FROM agent_memory.change_log
+                  WHERE published_at IS NULL
+                    AND (claimed_at IS NULL OR claimed_at < now() - INTERVAL '30 seconds')
+                  ORDER BY change_id
+                  LIMIT 200
+                  FOR UPDATE SKIP LOCKED)
+          RETURNING change_id, table_name, op, row_key, subject, before_doc, after_doc, changed_at
+    # A failed poll (database unreachable, bad DSN) must be visible: log it
+    # and drop the tick; the next tick polls again.
+    - catch:
+        - log:
+            level: ERROR
+            message: 'pg-agent-memory-cdc: poll failed: ${! error() }'
+        - mapping: root = deleted()
+    # The poll result is one JSON array (empty when nothing is pending): keep
+    # the object rows, sort them by change_id (RETURNING has no order) and
+    # split them into one message per change.
+    - mapping: root = this.filter(r -> r.type() == "object").sort_by(r -> r.change_id.or(0))
+    - unarchive:
+        format: json_array
+    - label: envelope
+      mapping: |
+        # Only object rows with the key columns are changes; anything else in
+        # the poll result is dropped.
+        root = if this.type() != "object" || !this.exists("change_id") || !this.exists("table_name") || !this.exists("row_key") {
+          deleted()
+        } else {
+          {
+            "change_id": this.change_id,
+            "table": this.table_name,
+            "op": this.op,
+            "row_key": this.row_key,
+            "subject": this.subject,
+            # jsonb columns arrive as JSON text from the driver; an already
+            # parsed object (or a null) is accepted as it is.
+            "before": if this.before_doc.type() == "string" { this.before_doc.parse_json() } else { this.before_doc },
+            "after": if this.after_doc.type() == "string" { this.after_doc.parse_json() } else { this.after_doc },
+            "changed_at": this.changed_at
+          }
+        }
+        meta kafka_key = this.row_key.string()
+    # A malformed row must never stall the stream: log it and drop it.
+    - catch:
+        - log:
+            level: ERROR
+            message: 'pg-agent-memory-cdc: dropping malformed change_log row: ${! error() }'
+        - mapping: root = deleted()
+
+output:
+  # Each change goes to its topic and is then marked published, in that order.
+  # A failed send is retried until it succeeds (the poll does not move on).
+  switch:
+    retry_until_success: true
+    cases:
+      - check: this.table == "memories"
+        output:
+          broker:
+            pattern: fan_out_sequential
+            outputs:
+              - redpanda:
+                  seed_brokers: [ "${REDPANDA_BROKERS}" ]
+                  tls:
+                    enabled: true
+                  sasl:
+                    - mechanism: SCRAM-SHA-256
+                      username: "${secrets.AGENT_MEMORY_PG_KAFKA_USER}"
+                      password: "${secrets.AGENT_MEMORY_PG_KAFKA_PASSWORD}"
+                  topic: agent.pg.memory.cdc
+                  key: '${! meta("kafka_key") }'
+              - sql_raw:
+                  driver: postgres
+                  dsn: "${secrets.AGENT_MEMORY_PG_DSN}"
+                  query: UPDATE agent_memory.change_log SET published_at = now() WHERE change_id = $1::bigint AND published_at IS NULL
+                  args_mapping: root = [ this.change_id ]
+                  max_in_flight: 1
+      - check: this.table == "accounts"
+        output:
+          broker:
+            pattern: fan_out_sequential
+            outputs:
+              - redpanda:
+                  seed_brokers: [ "${REDPANDA_BROKERS}" ]
+                  tls:
+                    enabled: true
+                  sasl:
+                    - mechanism: SCRAM-SHA-256
+                      username: "${secrets.AGENT_MEMORY_PG_KAFKA_USER}"
+                      password: "${secrets.AGENT_MEMORY_PG_KAFKA_PASSWORD}"
+                  topic: agent.pg.accounts.cdc
+                  key: '${! meta("kafka_key") }'
+              - sql_raw:
+                  driver: postgres
+                  dsn: "${secrets.AGENT_MEMORY_PG_DSN}"
+                  query: UPDATE agent_memory.change_log SET published_at = now() WHERE change_id = $1::bigint AND published_at IS NULL
+                  args_mapping: root = [ this.change_id ]
+                  max_in_flight: 1
+      # Any other table_name (none today) is marked published without a topic.
+      - output:
+          sql_raw:
+            driver: postgres
+            dsn: "${secrets.AGENT_MEMORY_PG_DSN}"
+            query: UPDATE agent_memory.change_log SET published_at = now() WHERE change_id = $1::bigint AND published_at IS NULL
+            args_mapping: root = [ this.change_id ]
+            max_in_flight: 1
+
+# Service-wide fields (stripped by scripts/40-pipelines.sh --local, where they
+# move into the streams-mode root config).
+metrics:
+  prometheus: {}
+
+logger:
+  level: INFO

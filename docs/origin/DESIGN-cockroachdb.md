@@ -1,3 +1,10 @@
+> **Origin document, superseded.** This is the design contract of the CockroachDB demo this repository was ported
+> from (https://github.com/meticulo3366/redpanda-agent-database-demo), kept for the verified ADP API shapes and the
+> reasoning behind the names. Nothing in it is binding here any more: the PostgreSQL port is described by
+> `docs/PORT-CONTRACT.md`, `docs/ARCHITECTURE.md` and `README.md`. Where this file says CockroachDB, CHANGEFEED,
+> row-level TTL, `agent_rw` or `CRDB_*`, the port has triggers into a change-log table, a polling Connect pipeline,
+> an hourly purge pipeline, a single database user and `PG_*` variables.
+
 > **Notice (PostgreSQL fork).** This file is the verified record of the original CockroachDB Cloud build and is kept unchanged: its names, schemas, CHANGEFEED envelopes and row-level TTL facts describe that build, and this fork's scripts still deploy to it. The rest of this fork's documentation (`README.md`, `docs/ARCHITECTURE.md`, `docs/DEMO-SCRIPT.md`) describes the PostgreSQL variant: PostgreSQL in the database role, Redpanda Connect `postgres_cdc` over logical replication in place of CHANGEFEED, and a scheduled purge in place of TTL. The mapping between the two, and what a code port changes, lives in `docs/POSTGRES-PORT.md`.
 
 # Design and build contract: Agent memory on CockroachDB, governed by Redpanda

@@ -1,23 +1,26 @@
 #!/usr/bin/env bash
-# 40-pipelines.sh : deploy the two Redpanda Connect pipelines.
+# 40-pipelines.sh : deploy the four Redpanda Connect pipelines.
 #
 #   ./scripts/40-pipelines.sh          cloud mode: create or update the managed
-#                                      pipelines agent-memory-audit and
-#                                      agent-memory-observer through the Data
+#                                      pipelines pg-agent-memory-cdc, -audit,
+#                                      -observer and -purge through the Data
 #                                      Plane API, store ids in .state/pipelines.json
 #                                      and print their state.
-#   ./scripts/40-pipelines.sh --local  run both pipelines on this machine with
+#   ./scripts/40-pipelines.sh --local  run the pipelines on this machine with
 #                                      `rpk connect streams`, using the Kafka user
-#                                      and the agent_rw DSN from .env.
+#                                      and the agent DSN from .env.
+#   Any extra argument is a pipeline name: only those are deployed or run
+#   (e.g. --local pg-agent-memory-cdc).
 #
 # The config files in connect/ are uploaded verbatim (they reference
 # REDPANDA_BROKERS and secrets.NAME interpolations, which Redpanda Cloud
 # resolves). For --local the script renders .state/connect/*.rendered.yaml
 # copies with secrets.NAME -> NAME and moves metrics/logger (service-wide
 # fields, not allowed inside stream files) into a streams-mode root config.
-# Idempotent by pipeline display_name. Contract: docs/DESIGN.md sections 6, 8.
+# Idempotent by pipeline display_name. Contract: docs/PORT-CONTRACT.md sections 5, 6, 8.
 set -euo pipefail
 
+# shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 
 usage() {
@@ -26,10 +29,12 @@ usage() {
 }
 
 MODE=cloud
+ONLY=()
 for arg in "$@"; do
   case "$arg" in
     --local) MODE=local ;;
     -h|--help) usage 0 ;;
+    pg-agent-memory-*) ONLY+=("$arg") ;;
     *) warn "unknown argument: $arg"; usage 1 ;;
   esac
 done
@@ -40,21 +45,26 @@ require_cmd jq rpk mktemp
 CONNECT_DIR="$REPO_ROOT/connect"
 STATE_FILE="$STATE_DIR/pipelines.json"
 LIST_FILE=""   # temp copy of the pipeline list (cloud mode); removed by the EXIT trap
-PIPELINE_NAMES=(agent-memory-audit agent-memory-observer)
+PIPELINE_NAMES=(pg-agent-memory-cdc pg-agent-memory-audit pg-agent-memory-observer pg-agent-memory-purge)
+if (( ${#ONLY[@]} > 0 )); then PIPELINE_NAMES=("${ONLY[@]}"); fi
 PIPELINE_WAIT_SECONDS="${PIPELINE_WAIT_SECONDS:-120}"
 
 # Static per-pipeline facts (bash 3 compatible: no associative arrays).
 pipeline_file() {
   case "$1" in
-    agent-memory-audit)    echo "$CONNECT_DIR/memory-audit.yaml" ;;
-    agent-memory-observer) echo "$CONNECT_DIR/account-observer.yaml" ;;
+    pg-agent-memory-cdc)      echo "$CONNECT_DIR/pg-cdc.yaml" ;;
+    pg-agent-memory-audit)    echo "$CONNECT_DIR/memory-audit.yaml" ;;
+    pg-agent-memory-observer) echo "$CONNECT_DIR/account-observer.yaml" ;;
+    pg-agent-memory-purge)    echo "$CONNECT_DIR/memory-purge.yaml" ;;
     *) die "unknown pipeline: $1" ;;
   esac
 }
 pipeline_description() {
   case "$1" in
-    agent-memory-audit)    echo "Agent memory demo: materialises the CockroachDB changefeed on agent.memory.cdc into the append-only memory_audit table." ;;
-    agent-memory-observer) echo "Agent memory demo: watches agent.accounts.cdc and writes observation memories (overdraft, large deposit) into CockroachDB." ;;
+    pg-agent-memory-cdc)      echo "Agent memory demo (PostgreSQL): polls agent_memory.change_log every second and publishes memory and account changes to agent.pg.memory.cdc / agent.pg.accounts.cdc." ;;
+    pg-agent-memory-audit)    echo "Agent memory demo (PostgreSQL): materialises agent.pg.memory.cdc into the append-only agent_memory.memory_audit table." ;;
+    pg-agent-memory-observer) echo "Agent memory demo (PostgreSQL): watches agent.pg.accounts.cdc and writes observation memories (overdraft, large deposit) into agent_memory.memories." ;;
+    pg-agent-memory-purge)    echo "Agent memory demo (PostgreSQL): deletes expired memories once an hour (the only DELETE on memories; each one is logged by the trigger)." ;;
     *) die "unknown pipeline: $1" ;;
   esac
 }
@@ -114,7 +124,7 @@ build_body() {
       description: $desc,
       config_yaml: $cfg,
       resources: { cpu_shares: "100m", memory_shares: "400M" },
-      tags: { demo: "agent-memory", owner: "zeke.dean" }
+      tags: { demo: "agent-memory-pg", owner: "zeke.dean", stack: "postgresql-redpanda" }
     }'
 }
 
@@ -269,7 +279,7 @@ run_local() {
 
   # Loopback only, and the exec below passes --no-api: the unauthenticated
   # streams management API (create/update/delete streams) must not be reachable
-  # from the network while a process holding the Kafka password and the agent_rw
+  # from the network while a process holding the Kafka password and the agent
   # DSN is running. /metrics and /ready stay available on localhost.
   cat >"$out_dir/observability.yaml" <<'YAML'
 # Streams-mode root config (service-wide fields) for scripts/40-pipelines.sh --local
@@ -283,10 +293,10 @@ YAML
 
   # Same names the cloud secret store uses, so the rendered configs read 1:1.
   export REDPANDA_BROKERS
-  export AGENT_MEMORY_KAFKA_USER="$KAFKA_USER"
-  export AGENT_MEMORY_KAFKA_PASSWORD="$KAFKA_PASSWORD"
-  AGENT_MEMORY_CRDB_DSN="$(crdb_agent_url)"
-  export AGENT_MEMORY_CRDB_DSN
+  export AGENT_MEMORY_PG_KAFKA_USER="$KAFKA_USER"
+  export AGENT_MEMORY_PG_KAFKA_PASSWORD="$KAFKA_PASSWORD"
+  AGENT_MEMORY_PG_DSN="$(pg_agent_url)"
+  export AGENT_MEMORY_PG_DSN
 
   info "rpk connect lint (rendered copies, env resolved)"
   rpk connect lint "${rendered[@]}"

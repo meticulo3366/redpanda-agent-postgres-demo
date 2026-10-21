@@ -1,188 +1,186 @@
 # Unit tests for connect/account-observer.yaml (rpk connect test connect/tests/account-observer_test.yaml)
 #
-# Inputs are realistic CockroachDB changefeed envelopes for agent_memory.public.accounts
-# (WITH updated, diff, format = json): the Kafka key is the INT8 primary key as a JSON
-# array ([1001]) in metadata kafka_key, DECIMAL columns arrive as JSON strings (or
-# numbers on some versions), resolved markers are {"resolved": "<hlc>"}. Expected
+# Inputs are the change envelopes published by connect/pg-cdc.yaml for
+# agent_memory.accounts: {"change_id", "table", "op", "row_key", "subject",
+# "before": {...}|null, "after": {...}|null, "changed_at"}, keyed by account_id;
+# NUMERIC columns arrive as JSON numbers (strings are accepted too). Expected
 # outputs are the exact row objects the sql_raw args_mapping reads
-# ($1 = subject, $2 = content, $3 = source_ref).
+# ($1 = subject, $2 = content, $3 = source_ref, $4 = content_hash). The hashes
+# are md5(lower(subject) || '|' || lower(content)), computed independently with
+# the md5 command line tool and checked against the server's md5() function.
 tests:
   - name: overdraft (balance 2450.00 -> -450.00) emits an observation
     target_processors: '../account-observer.yaml#/pipeline/processors'
     input_batch:
       - metadata:
-          kafka_key: '[1001]'
-          kafka_topic: agent.accounts.cdc
+          kafka_key: '1001'
+          kafka_topic: agent.pg.accounts.cdc
         content: |-
-          {"after": {"account_id": 1001, "account_number": "4419-8832-1001", "account_type": "checking", "balance": "-450.00", "currency": "USD", "customer_id": "7b0e2c4a-9d3f-4e6b-8a1c-2f5d7e9b0c3a", "nickname": "Everyday Checking", "overdraft_limit": "500.00", "owner_email": "zeke.dean@redpanda.com", "status": "open", "updated_at": "2026-10-15T15:11:58.412000Z"}, "before": {"account_id": 1001, "account_number": "4419-8832-1001", "account_type": "checking", "balance": "2450.00", "currency": "USD", "customer_id": "7b0e2c4a-9d3f-4e6b-8a1c-2f5d7e9b0c3a", "nickname": "Everyday Checking", "overdraft_limit": "500.00", "owner_email": "zeke.dean@redpanda.com", "status": "open", "updated_at": "2026-09-14T09:00:00.000000Z"}, "updated": "1760540400000000000.0000000000"}
+          {"change_id": 7, "table": "accounts", "op": "update", "row_key": 1001, "subject": "zeke.dean@redpanda.com", "before": {"account_id": 1001, "owner_email": "zeke.dean@redpanda.com", "nickname": "Everyday Checking", "account_type": "checking", "balance": 2450.00, "currency": "USD", "overdraft_limit": 500.00, "status": "open", "updated_at": "2026-09-14T09:00:00+00:00"}, "after": {"account_id": 1001, "owner_email": "zeke.dean@redpanda.com", "nickname": "Everyday Checking", "account_type": "checking", "balance": -450.00, "currency": "USD", "overdraft_limit": 500.00, "status": "open", "updated_at": "2026-10-15T15:11:58.412+00:00"}, "changed_at": "2026-10-15T15:11:58.412345+00:00"}
     output_batches:
       - - json_equals:
             rule: overdraft
             account_id: 1001
             subject: zeke.dean@redpanda.com
             content: "Account 'Everyday Checking' went overdrawn on 2026-10-15: balance moved from 2450.00 to -450.00 USD."
-            source_ref: accounts/1001@1760540400000000000.0000000000
+            source_ref: accounts/1001@7
+            content_hash: b08d277c7a01d85fe55ed963a7fab138
 
-  - name: overdraft with DECIMALs delivered as JSON numbers is normalised to two decimals
+  - name: overdraft with NUMERICs delivered as strings is normalised to two decimals
     target_processors: '../account-observer.yaml#/pipeline/processors'
     input_batch:
       - metadata:
-          kafka_key: '[1001]'
+          kafka_key: '1001'
         content: |-
-          {"after": {"account_id": 1001, "account_number": "4419-8832-1001", "account_type": "checking", "balance": -450.5, "currency": "USD", "customer_id": "7b0e2c4a-9d3f-4e6b-8a1c-2f5d7e9b0c3a", "nickname": "Everyday Checking", "overdraft_limit": 500, "owner_email": "zeke.dean@redpanda.com", "status": "open", "updated_at": "2026-10-15T15:11:58.412000+00:00"}, "before": {"account_id": 1001, "account_number": "4419-8832-1001", "account_type": "checking", "balance": 2450, "currency": "USD", "customer_id": "7b0e2c4a-9d3f-4e6b-8a1c-2f5d7e9b0c3a", "nickname": "Everyday Checking", "overdraft_limit": 500, "owner_email": "zeke.dean@redpanda.com", "status": "open", "updated_at": "2026-09-14T09:00:00.000000+00:00"}, "updated": "1760540400000000000.0000000001"}
+          {"change_id": 8, "table": "accounts", "op": "update", "row_key": 1001, "subject": "zeke.dean@redpanda.com", "before": {"account_id": 1001, "owner_email": "zeke.dean@redpanda.com", "nickname": "Everyday Checking", "balance": "2450", "currency": "USD", "updated_at": "2026-09-14T09:00:00Z"}, "after": {"account_id": 1001, "owner_email": "zeke.dean@redpanda.com", "nickname": "Everyday Checking", "balance": "-450.5", "currency": "USD", "updated_at": "2026-10-15T15:11:58.412Z"}, "changed_at": "2026-10-15T15:11:58.412345+00:00"}
     output_batches:
       - - json_equals:
             rule: overdraft
             account_id: 1001
             subject: zeke.dean@redpanda.com
             content: "Account 'Everyday Checking' went overdrawn on 2026-10-15: balance moved from 2450.00 to -450.50 USD."
-            source_ref: accounts/1001@1760540400000000000.0000000001
+            source_ref: accounts/1001@8
+            content_hash: 77af46888c818c947ab9fed3207696ba
 
   - name: overdraft with a non-RFC3339 updated_at falls back to the first ten characters for the date
     target_processors: '../account-observer.yaml#/pipeline/processors'
     input_batch:
       - metadata:
-          kafka_key: '[1001]'
+          kafka_key: '1001'
         content: |-
-          {"after": {"account_id": 1001, "account_number": "4419-8832-1001", "account_type": "checking", "balance": "-450.00", "currency": "USD", "customer_id": "7b0e2c4a-9d3f-4e6b-8a1c-2f5d7e9b0c3a", "nickname": "Everyday Checking", "overdraft_limit": "500.00", "owner_email": "zeke.dean@redpanda.com", "status": "open", "updated_at": "2026-10-15 15:11:58.412+00"}, "before": {"account_id": 1001, "account_number": "4419-8832-1001", "account_type": "checking", "balance": "2450.00", "currency": "USD", "customer_id": "7b0e2c4a-9d3f-4e6b-8a1c-2f5d7e9b0c3a", "nickname": "Everyday Checking", "overdraft_limit": "500.00", "owner_email": "zeke.dean@redpanda.com", "status": "open", "updated_at": "2026-09-14 09:00:00+00"}, "updated": "1760540400000000000.0000000002"}
+          {"change_id": 9, "table": "accounts", "op": "update", "row_key": 1001, "subject": "zeke.dean@redpanda.com", "before": {"account_id": 1001, "owner_email": "zeke.dean@redpanda.com", "nickname": "Everyday Checking", "balance": 2450.00, "currency": "USD", "updated_at": "2026-09-14 09:00:00+00"}, "after": {"account_id": 1001, "owner_email": "zeke.dean@redpanda.com", "nickname": "Everyday Checking", "balance": -450.00, "currency": "USD", "updated_at": "2026-10-15 15:11:58.412+00"}, "changed_at": "2026-10-15T15:11:58.412345+00:00"}
     output_batches:
       - - json_equals:
             rule: overdraft
             account_id: 1001
             subject: zeke.dean@redpanda.com
             content: "Account 'Everyday Checking' went overdrawn on 2026-10-15: balance moved from 2450.00 to -450.00 USD."
-            source_ref: accounts/1001@1760540400000000000.0000000002
+            source_ref: accounts/1001@9
+            content_hash: b08d277c7a01d85fe55ed963a7fab138
 
-  - name: overdraft boundary (0.00 -> -0.01) still counts as going overdrawn
+  - name: overdraft boundary (0.00 -> -0.01) still counts as going overdrawn, subject from the document when the envelope has none
     target_processors: '../account-observer.yaml#/pipeline/processors'
     input_batch:
       - metadata:
-          kafka_key: '[2001]'
+          kafka_key: '2001'
         content: |-
-          {"after": {"account_id": 2001, "account_number": "4419-8832-2001", "account_type": "checking", "balance": "-0.01", "currency": "EUR", "customer_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", "nickname": "Alice Checking", "overdraft_limit": "0.00", "owner_email": "alice@example.com", "status": "open", "updated_at": "2026-10-16T08:00:00.000000Z"}, "before": {"account_id": 2001, "account_number": "4419-8832-2001", "account_type": "checking", "balance": "0.00", "currency": "EUR", "customer_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", "nickname": "Alice Checking", "overdraft_limit": "0.00", "owner_email": "alice@example.com", "status": "open", "updated_at": "2026-10-15T08:00:00.000000Z"}, "updated": "1760601600000000000.0000000000"}
+          {"change_id": 10, "table": "accounts", "op": "update", "row_key": 2001, "subject": null, "before": {"account_id": 2001, "owner_email": "alice@example.com", "nickname": "Alice Checking", "balance": 0.00, "currency": "EUR", "updated_at": "2026-10-15T08:00:00+00:00"}, "after": {"account_id": 2001, "owner_email": "alice@example.com", "nickname": "Alice Checking", "balance": -0.01, "currency": "EUR", "updated_at": "2026-10-16T08:00:00+00:00"}, "changed_at": "2026-10-16T08:00:00.1+00:00"}
     output_batches:
       - - json_equals:
             rule: overdraft
             account_id: 2001
             subject: alice@example.com
             content: "Account 'Alice Checking' went overdrawn on 2026-10-16: balance moved from 0.00 to -0.01 EUR."
-            source_ref: accounts/2001@1760601600000000000.0000000000
+            source_ref: accounts/2001@10
+            content_hash: abe8d419c7415e484d19c5f8c1b968c7
 
   - name: already overdrawn account going further negative is not a new overdraft
     target_processors: '../account-observer.yaml#/pipeline/processors'
     input_batch:
       - metadata:
-          kafka_key: '[1003]'
+          kafka_key: '1003'
         content: |-
-          {"after": {"account_id": 1003, "account_number": "4419-8832-1003", "account_type": "credit", "balance": "-912.40", "currency": "USD", "customer_id": "7b0e2c4a-9d3f-4e6b-8a1c-2f5d7e9b0c3a", "nickname": "Travel Card", "overdraft_limit": "0.00", "owner_email": "zeke.dean@redpanda.com", "status": "open", "updated_at": "2026-10-15T16:00:00.000000Z"}, "before": {"account_id": 1003, "account_number": "4419-8832-1003", "account_type": "credit", "balance": "-812.40", "currency": "USD", "customer_id": "7b0e2c4a-9d3f-4e6b-8a1c-2f5d7e9b0c3a", "nickname": "Travel Card", "overdraft_limit": "0.00", "owner_email": "zeke.dean@redpanda.com", "status": "open", "updated_at": "2026-10-14T16:00:00.000000Z"}, "updated": "1760544000000000000.0000000000"}
+          {"change_id": 11, "table": "accounts", "op": "update", "row_key": 1003, "subject": "zeke.dean@redpanda.com", "before": {"account_id": 1003, "owner_email": "zeke.dean@redpanda.com", "nickname": "Travel Card", "balance": -812.40, "currency": "USD", "updated_at": "2026-10-14T16:00:00+00:00"}, "after": {"account_id": 1003, "owner_email": "zeke.dean@redpanda.com", "nickname": "Travel Card", "balance": -912.40, "currency": "USD", "updated_at": "2026-10-15T16:00:00+00:00"}, "changed_at": "2026-10-15T16:00:00+00:00"}
     output_batches: []
 
   - name: large deposit of exactly 5000.00 emits an observation
     target_processors: '../account-observer.yaml#/pipeline/processors'
     input_batch:
       - metadata:
-          kafka_key: '[1002]'
+          kafka_key: '1002'
         content: |-
-          {"after": {"account_id": 1002, "account_number": "4419-8832-1002", "account_type": "savings", "balance": "46200.00", "currency": "USD", "customer_id": "7b0e2c4a-9d3f-4e6b-8a1c-2f5d7e9b0c3a", "nickname": "House Fund", "overdraft_limit": "0.00", "owner_email": "zeke.dean@redpanda.com", "status": "open", "updated_at": "2026-10-15T17:30:00.000000Z"}, "before": {"account_id": 1002, "account_number": "4419-8832-1002", "account_type": "savings", "balance": "41200.00", "currency": "USD", "customer_id": "7b0e2c4a-9d3f-4e6b-8a1c-2f5d7e9b0c3a", "nickname": "House Fund", "overdraft_limit": "0.00", "owner_email": "zeke.dean@redpanda.com", "status": "open", "updated_at": "2026-09-01T17:30:00.000000Z"}, "updated": "1760549400000000000.0000000000"}
+          {"change_id": 12, "table": "accounts", "op": "update", "row_key": 1002, "subject": "zeke.dean@redpanda.com", "before": {"account_id": 1002, "owner_email": "zeke.dean@redpanda.com", "nickname": "House Fund", "balance": 41200.00, "currency": "USD", "updated_at": "2026-09-01T17:30:00+00:00"}, "after": {"account_id": 1002, "owner_email": "zeke.dean@redpanda.com", "nickname": "House Fund", "balance": 46200.00, "currency": "USD", "updated_at": "2026-10-15T17:30:00+00:00"}, "changed_at": "2026-10-15T17:30:00+00:00"}
     output_batches:
       - - json_equals:
             rule: large_deposit
             account_id: 1002
             subject: zeke.dean@redpanda.com
             content: "Account 'House Fund' received a large deposit of 5000.00 USD on 2026-10-15: balance moved from 41200.00 to 46200.00."
-            source_ref: accounts/1002@1760549400000000000.0000000000
+            source_ref: accounts/1002@12
+            content_hash: dc57a52de5e00ff5a4a1aad086707bea
 
   - name: deposit just under the threshold (4999.99) is dropped
     target_processors: '../account-observer.yaml#/pipeline/processors'
     input_batch:
       - metadata:
-          kafka_key: '[1002]'
+          kafka_key: '1002'
         content: |-
-          {"after": {"account_id": 1002, "account_number": "4419-8832-1002", "account_type": "savings", "balance": "46199.99", "currency": "USD", "customer_id": "7b0e2c4a-9d3f-4e6b-8a1c-2f5d7e9b0c3a", "nickname": "House Fund", "overdraft_limit": "0.00", "owner_email": "zeke.dean@redpanda.com", "status": "open", "updated_at": "2026-10-15T17:30:00.000000Z"}, "before": {"account_id": 1002, "account_number": "4419-8832-1002", "account_type": "savings", "balance": "41200.00", "currency": "USD", "customer_id": "7b0e2c4a-9d3f-4e6b-8a1c-2f5d7e9b0c3a", "nickname": "House Fund", "overdraft_limit": "0.00", "owner_email": "zeke.dean@redpanda.com", "status": "open", "updated_at": "2026-09-01T17:30:00.000000Z"}, "updated": "1760549400000000000.0000000000"}
+          {"change_id": 13, "table": "accounts", "op": "update", "row_key": 1002, "subject": "zeke.dean@redpanda.com", "before": {"account_id": 1002, "owner_email": "zeke.dean@redpanda.com", "nickname": "House Fund", "balance": 41200.00, "currency": "USD", "updated_at": "2026-09-01T17:30:00+00:00"}, "after": {"account_id": 1002, "owner_email": "zeke.dean@redpanda.com", "nickname": "House Fund", "balance": 46199.99, "currency": "USD", "updated_at": "2026-10-15T17:30:00+00:00"}, "changed_at": "2026-10-15T17:30:00+00:00"}
     output_batches: []
 
   - name: large withdrawal that stays positive is dropped
     target_processors: '../account-observer.yaml#/pipeline/processors'
     input_batch:
       - metadata:
-          kafka_key: '[1002]'
+          kafka_key: '1002'
         content: |-
-          {"after": {"account_id": 1002, "account_number": "4419-8832-1002", "account_type": "savings", "balance": "31200.00", "currency": "USD", "customer_id": "7b0e2c4a-9d3f-4e6b-8a1c-2f5d7e9b0c3a", "nickname": "House Fund", "overdraft_limit": "0.00", "owner_email": "zeke.dean@redpanda.com", "status": "open", "updated_at": "2026-10-15T17:30:00.000000Z"}, "before": {"account_id": 1002, "account_number": "4419-8832-1002", "account_type": "savings", "balance": "41200.00", "currency": "USD", "customer_id": "7b0e2c4a-9d3f-4e6b-8a1c-2f5d7e9b0c3a", "nickname": "House Fund", "overdraft_limit": "0.00", "owner_email": "zeke.dean@redpanda.com", "status": "open", "updated_at": "2026-09-01T17:30:00.000000Z"}, "updated": "1760549400000000000.0000000000"}
+          {"change_id": 14, "table": "accounts", "op": "update", "row_key": 1002, "subject": "zeke.dean@redpanda.com", "before": {"account_id": 1002, "owner_email": "zeke.dean@redpanda.com", "nickname": "House Fund", "balance": 41200.00, "currency": "USD", "updated_at": "2026-09-01T17:30:00+00:00"}, "after": {"account_id": 1002, "owner_email": "zeke.dean@redpanda.com", "nickname": "House Fund", "balance": 31200.00, "currency": "USD", "updated_at": "2026-10-15T17:30:00+00:00"}, "changed_at": "2026-10-15T17:30:00+00:00"}
     output_batches: []
 
   - name: update that does not touch the balance (nickname change) is dropped
     target_processors: '../account-observer.yaml#/pipeline/processors'
     input_batch:
       - metadata:
-          kafka_key: '[1001]'
+          kafka_key: '1001'
         content: |-
-          {"after": {"account_id": 1001, "account_number": "4419-8832-1001", "account_type": "checking", "balance": "2450.00", "currency": "USD", "customer_id": "7b0e2c4a-9d3f-4e6b-8a1c-2f5d7e9b0c3a", "nickname": "Daily Checking", "overdraft_limit": "500.00", "owner_email": "zeke.dean@redpanda.com", "status": "open", "updated_at": "2026-10-15T15:11:58.412000Z"}, "before": {"account_id": 1001, "account_number": "4419-8832-1001", "account_type": "checking", "balance": "2450.00", "currency": "USD", "customer_id": "7b0e2c4a-9d3f-4e6b-8a1c-2f5d7e9b0c3a", "nickname": "Everyday Checking", "overdraft_limit": "500.00", "owner_email": "zeke.dean@redpanda.com", "status": "open", "updated_at": "2026-09-14T09:00:00.000000Z"}, "updated": "1760540400000000000.0000000000"}
+          {"change_id": 15, "table": "accounts", "op": "update", "row_key": 1001, "subject": "zeke.dean@redpanda.com", "before": {"account_id": 1001, "owner_email": "zeke.dean@redpanda.com", "nickname": "Everyday Checking", "balance": 2450.00, "currency": "USD", "updated_at": "2026-09-14T09:00:00+00:00"}, "after": {"account_id": 1001, "owner_email": "zeke.dean@redpanda.com", "nickname": "Daily Checking", "balance": 2450.00, "currency": "USD", "updated_at": "2026-10-15T15:11:58.412+00:00"}, "changed_at": "2026-10-15T15:11:58.412345+00:00"}
     output_batches: []
 
-  - name: insert (before null, e.g. initial scan or seed) is dropped
+  - name: a memories envelope on the wrong topic is dropped (no balance to compare)
     target_processors: '../account-observer.yaml#/pipeline/processors'
     input_batch:
-      - metadata:
-          kafka_key: '[1001]'
-        content: |-
-          {"after": {"account_id": 1001, "account_number": "4419-8832-1001", "account_type": "checking", "balance": "-450.00", "currency": "USD", "customer_id": "7b0e2c4a-9d3f-4e6b-8a1c-2f5d7e9b0c3a", "nickname": "Everyday Checking", "overdraft_limit": "500.00", "owner_email": "zeke.dean@redpanda.com", "status": "open", "updated_at": "2026-10-15T15:11:58.412000Z"}, "before": null, "updated": "1760540400000000000.0000000000"}
+      - content: |-
+          {"change_id": 16, "table": "memories", "op": "update", "row_key": 12, "subject": "zeke.dean@redpanda.com", "before": {"memory_id": 12, "importance": 3}, "after": {"memory_id": 12, "importance": 5}, "changed_at": "2026-10-15T15:11:58.412345+00:00"}
     output_batches: []
 
-  - name: delete (after null) is dropped
+  - name: insert and delete envelopes are dropped
     target_processors: '../account-observer.yaml#/pipeline/processors'
     input_batch:
-      - metadata:
-          kafka_key: '[1001]'
-        content: |-
-          {"after": null, "before": {"account_id": 1001, "account_number": "4419-8832-1001", "account_type": "checking", "balance": "2450.00", "currency": "USD", "customer_id": "7b0e2c4a-9d3f-4e6b-8a1c-2f5d7e9b0c3a", "nickname": "Everyday Checking", "overdraft_limit": "500.00", "owner_email": "zeke.dean@redpanda.com", "status": "open", "updated_at": "2026-09-14T09:00:00.000000Z"}, "updated": "1760540400000000000.0000000000"}
-    output_batches: []
-
-  - name: resolved marker is dropped
-    target_processors: '../account-observer.yaml#/pipeline/processors'
-    input_batch:
-      - content: '{"resolved": "1760540410000000000.0000000000"}'
+      - content: '{"change_id": 17, "table": "accounts", "op": "insert", "row_key": 1001, "subject": "zeke.dean@redpanda.com", "before": null, "after": {"account_id": 1001, "balance": -450.00}, "changed_at": "2026-10-15T15:11:58+00:00"}'
+      - content: '{"change_id": 18, "table": "accounts", "op": "delete", "row_key": 1001, "subject": "zeke.dean@redpanda.com", "before": {"account_id": 1001, "balance": 2450.00}, "after": null, "changed_at": "2026-10-15T15:11:59+00:00"}'
     output_batches: []
 
   - name: malformed (non-JSON) event is dropped, not forwarded
     target_processors: '../account-observer.yaml#/pipeline/processors'
     input_batch:
       - metadata:
-          kafka_key: '[1001]'
-        content: 'this is not a changefeed envelope'
+          kafka_key: '1001'
+        content: 'this is not a change envelope'
     output_batches: []
 
   - name: update with a non-numeric balance is dropped instead of poisoning the batch
     target_processors: '../account-observer.yaml#/pipeline/processors'
     input_batch:
       - metadata:
-          kafka_key: '[1001]'
-        content: '{"after": {"account_id": 1001, "balance": "lots", "nickname": "Everyday Checking", "owner_email": "zeke.dean@redpanda.com", "updated_at": "2026-10-15T15:11:58.412000Z"}, "before": {"account_id": 1001, "balance": "2450.00"}, "updated": "1760540400000000000.0000000000"}'
+          kafka_key: '1001'
+        content: '{"change_id": 19, "table": "accounts", "op": "update", "row_key": 1001, "subject": "zeke.dean@redpanda.com", "before": {"account_id": 1001, "balance": 2450.00}, "after": {"account_id": 1001, "balance": "lots", "nickname": "Everyday Checking", "owner_email": "zeke.dean@redpanda.com", "updated_at": "2026-10-15T15:11:58.412+00:00"}, "changed_at": "2026-10-15T15:11:58.412345+00:00"}'
     output_batches: []
 
   - name: mixed batch keeps only the qualifying observations, in order
     target_processors: '../account-observer.yaml#/pipeline/processors'
     input_batch:
-      - content: '{"resolved": "1760540390000000000.0000000000"}'
+      - content: 'garbage'
       - metadata:
-          kafka_key: '[1001]'
-        content: '{"after": {"account_id": 1001, "balance": "-450.00", "currency": "USD", "nickname": "Everyday Checking", "owner_email": "zeke.dean@redpanda.com", "updated_at": "2026-10-15T15:11:58.412000Z"}, "before": {"account_id": 1001, "balance": "2450.00", "currency": "USD", "nickname": "Everyday Checking", "owner_email": "zeke.dean@redpanda.com", "updated_at": "2026-09-14T09:00:00.000000Z"}, "updated": "1760540400000000000.0000000000"}'
+          kafka_key: '1001'
+        content: '{"change_id": 20, "table": "accounts", "op": "update", "row_key": 1001, "subject": "zeke.dean@redpanda.com", "before": {"account_id": 1001, "owner_email": "zeke.dean@redpanda.com", "nickname": "Everyday Checking", "balance": 2450.00, "currency": "USD", "updated_at": "2026-09-14T09:00:00+00:00"}, "after": {"account_id": 1001, "owner_email": "zeke.dean@redpanda.com", "nickname": "Everyday Checking", "balance": -450.00, "currency": "USD", "updated_at": "2026-10-15T15:11:58.412+00:00"}, "changed_at": "2026-10-15T15:11:58.5+00:00"}'
       - metadata:
-          kafka_key: '[1001]'
-        content: '{"after": {"account_id": 1001, "balance": "-455.00", "currency": "USD", "nickname": "Everyday Checking", "owner_email": "zeke.dean@redpanda.com", "updated_at": "2026-10-15T15:12:30.000000Z"}, "before": {"account_id": 1001, "balance": "-450.00", "currency": "USD", "nickname": "Everyday Checking", "owner_email": "zeke.dean@redpanda.com", "updated_at": "2026-10-15T15:11:58.412000Z"}, "updated": "1760540450000000000.0000000000"}'
+          kafka_key: '1001'
+        content: '{"change_id": 21, "table": "accounts", "op": "update", "row_key": 1001, "subject": "zeke.dean@redpanda.com", "before": {"account_id": 1001, "owner_email": "zeke.dean@redpanda.com", "nickname": "Everyday Checking", "balance": -450.00, "currency": "USD", "updated_at": "2026-10-15T15:11:58.412+00:00"}, "after": {"account_id": 1001, "owner_email": "zeke.dean@redpanda.com", "nickname": "Everyday Checking", "balance": -455.00, "currency": "USD", "updated_at": "2026-10-15T15:12:30+00:00"}, "changed_at": "2026-10-15T15:12:30.5+00:00"}'
       - metadata:
-          kafka_key: '[1002]'
-        content: '{"after": {"account_id": 1002, "balance": "51200.00", "currency": "USD", "nickname": "House Fund", "owner_email": "zeke.dean@redpanda.com", "updated_at": "2026-10-15T15:13:00.000000Z"}, "before": {"account_id": 1002, "balance": "41200.00", "currency": "USD", "nickname": "House Fund", "owner_email": "zeke.dean@redpanda.com", "updated_at": "2026-09-01T17:30:00.000000Z"}, "updated": "1760540480000000000.0000000000"}'
-      - content: '{"resolved": "1760540500000000000.0000000000"}'
+          kafka_key: '1002'
+        content: '{"change_id": 22, "table": "accounts", "op": "update", "row_key": 1002, "subject": "zeke.dean@redpanda.com", "before": {"account_id": 1002, "owner_email": "zeke.dean@redpanda.com", "nickname": "House Fund", "balance": 41200.00, "currency": "USD", "updated_at": "2026-09-01T17:30:00+00:00"}, "after": {"account_id": 1002, "owner_email": "zeke.dean@redpanda.com", "nickname": "House Fund", "balance": 51200.00, "currency": "USD", "updated_at": "2026-10-15T15:13:00+00:00"}, "changed_at": "2026-10-15T15:13:00.5+00:00"}'
     output_batches:
       - - json_equals:
             rule: overdraft
             account_id: 1001
             subject: zeke.dean@redpanda.com
             content: "Account 'Everyday Checking' went overdrawn on 2026-10-15: balance moved from 2450.00 to -450.00 USD."
-            source_ref: accounts/1001@1760540400000000000.0000000000
+            source_ref: accounts/1001@20
+            content_hash: b08d277c7a01d85fe55ed963a7fab138
         - json_equals:
             rule: large_deposit
             account_id: 1002
             subject: zeke.dean@redpanda.com
             content: "Account 'House Fund' received a large deposit of 10000.00 USD on 2026-10-15: balance moved from 41200.00 to 51200.00."
-            source_ref: accounts/1002@1760540480000000000.0000000000
+            source_ref: accounts/1002@22
+            content_hash: b57db699922c9a173814cb0b75e5e782

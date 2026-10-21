@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# 20-redpanda-setup.sh - Redpanda Cloud side: SASL user, ACLs, topics and the
-# three secrets, all through the Data Plane API (docs/DESIGN.md section 6).
+# 20-redpanda-setup.sh - Redpanda Cloud side: this demo's SASL user, ACLs, topics
+# and the three secrets, all through the Data Plane API (docs/PORT-CONTRACT.md
+# section 2). Everything is named apart from the CockroachDB demo that shares the
+# cluster (user agent-memory-pg-demo, topics agent.pg.*, secrets AGENT_MEMORY_PG_*).
 #
 # Idempotent: every resource is looked up first (GET) and only created when
 # missing; the user password and the secret values are re-asserted from .env.
@@ -28,8 +30,8 @@ is_error_body() { jq -e 'type == "object" and has("code") and has("message")' <<
 summarize() {
   local s
   s="$(jq -r 'if type == "object" then ((.code // "") + " " + (.message // "")) else tostring end' <<<"$1" 2>/dev/null || printf '%s' "$1")"
-  s="${s//$KAFKA_PASSWORD/***}"
-  s="${s//$CRDB_AGENT_PASSWORD/***}"
+  s="${s//"$KAFKA_PASSWORD"/***}"
+  s="${s//"$PG_AGENT_PASSWORD"/***}"
   printf '%s' "${s:0:400}"
 }
 
@@ -111,8 +113,8 @@ ensure_acl() {
   fi
 }
 
-ensure_acl RESOURCE_TYPE_TOPIC   "agent."        RESOURCE_PATTERN_TYPE_PREFIXED OPERATION_ALL
-ensure_acl RESOURCE_TYPE_GROUP   "agent-memory"  RESOURCE_PATTERN_TYPE_PREFIXED OPERATION_ALL
+ensure_acl RESOURCE_TYPE_TOPIC   "agent.pg."        RESOURCE_PATTERN_TYPE_PREFIXED OPERATION_ALL
+ensure_acl RESOURCE_TYPE_GROUP   "agent-memory-pg"  RESOURCE_PATTERN_TYPE_PREFIXED OPERATION_ALL
 ensure_acl RESOURCE_TYPE_CLUSTER "kafka-cluster" RESOURCE_PATTERN_TYPE_LITERAL  OPERATION_DESCRIBE
 
 # ---------------------------------------------------------------------------
@@ -190,14 +192,14 @@ ensure_secret() {
   ok "updated secret $id"
 }
 
-ensure_secret AGENT_MEMORY_CRDB_DSN       "$(crdb_agent_url)"
-ensure_secret AGENT_MEMORY_KAFKA_USER     "$KAFKA_USER"
-ensure_secret AGENT_MEMORY_KAFKA_PASSWORD "$KAFKA_PASSWORD"
+ensure_secret AGENT_MEMORY_PG_DSN            "$(pg_agent_url)"
+ensure_secret AGENT_MEMORY_PG_KAFKA_USER     "$KAFKA_USER"
+ensure_secret AGENT_MEMORY_PG_KAFKA_PASSWORD "$KAFKA_PASSWORD"
 
 # ---------------------------------------------------------------------------
 info "Redpanda setup complete"
 log "  user:    $KAFKA_USER"
-log "  ACLs:    topic agent.* (ALL), group agent-memory* (ALL), cluster DESCRIBE"
+log "  ACLs:    topic agent.pg.* (ALL), group agent-memory-pg* (ALL), cluster DESCRIBE"
 log "  topics:  $TOPIC_MEMORY_CDC, $TOPIC_ACCOUNTS_CDC"
-log "  secrets: AGENT_MEMORY_CRDB_DSN, AGENT_MEMORY_KAFKA_USER, AGENT_MEMORY_KAFKA_PASSWORD"
-log "Next: make changefeeds"
+log "  secrets: AGENT_MEMORY_PG_DSN, AGENT_MEMORY_PG_KAFKA_USER, AGENT_MEMORY_PG_KAFKA_PASSWORD"
+log "Next: make pipelines"
